@@ -9,4 +9,3 @@ build/
 *.lock
 .pytest_cache/
 .ruff_cache/
-sounds/*.wav
