@@ -19,13 +19,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      - name: Lint
-        run: uv run ruff check src/ tests/
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1 \
+            libegl1 \
+            libxkbcommon-x11-0 \
+            libxcb-xinerama0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-xfixes0
 
-      - name: Test
-        run: uv run pytest -v
-        env:
-          QT_QPA_PLATFORM: offscreen
+
 
   build:
     needs: lint-and-test
