@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.spec
+!jinkies.spec
+.venv/
+*.lock
+.pytest_cache/
+.ruff_cache/
+sounds/*.wav
