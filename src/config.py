@@ -1,17 +1,21 @@
 """Platform-aware configuration persistence for Jinkies.
 
 Handles loading and saving application config and state as JSON files,
-using platform-appropriate directories.
+using platform-appropriate directories.  On load, any legacy plaintext
+credentials are migrated to the OS keyring.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 from typing import Any
 
 from src.models import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
 def get_config_dir() -> Path:
@@ -72,8 +76,46 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+def _migrate_plaintext_credentials(config: AppConfig, config_dir: Path) -> bool:
+    """Migrate any plaintext credentials to the OS keyring.
+
+    If a feed still has ``auth_user`` / ``auth_token`` populated from a
+    legacy config file, they are moved into the keyring and the config
+    is re-saved without them.
+
+    Args:
+        config: The loaded AppConfig (may be mutated).
+        config_dir: Config directory for re-saving.
+
+    Returns:
+        True if any credentials were migrated.
+    """
+    from src.credential_store import store_credentials
+
+    migrated = False
+    for feed in config.feeds:
+        if feed.auth_user and feed.auth_token:
+            try:
+                store_credentials(feed.url, feed.auth_user, feed.auth_token)
+                logger.info("Migrated credentials for %s to keyring", feed.url)
+            except ValueError:
+                logger.warning(
+                    "Skipped credential migration for non-HTTPS feed: %s",
+                    feed.url,
+                )
+            # Clear plaintext regardless so they are never re-saved
+            feed.auth_user = None
+            feed.auth_token = None
+            migrated = True
+    return migrated
+
+
 def load_config(config_dir: Path | None = None) -> AppConfig:
     """Load application configuration from disk.
+
+    On first load after upgrade, any plaintext credentials found in the
+    config file are migrated to the OS keyring and the config is
+    re-saved without them.
 
     Args:
         config_dir: Override config directory (for testing).
@@ -85,7 +127,13 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     data = _read_json(config_dir / "config.json")
     if not data:
         return AppConfig()
-    return AppConfig.from_dict(data)
+    config = AppConfig.from_dict(data)
+
+    # Migrate legacy plaintext credentials
+    if _migrate_plaintext_credentials(config, config_dir):
+        save_config(config, config_dir)
+
+    return config
 
 
 def save_config(config: AppConfig, config_dir: Path | None = None) -> None:

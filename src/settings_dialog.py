@@ -31,6 +31,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.credential_store import delete_credentials, get_credentials, store_credentials
+
 if TYPE_CHECKING:
     from src.models import AppConfig, Feed
 
@@ -174,11 +176,16 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             from src.models import Feed
 
+            url = dialog.url_edit.text()
+            username = dialog.auth_user_edit.text() or None
+            token = dialog.auth_token_edit.text() or None
+
+            if username and token:
+                store_credentials(url, username, token)
+
             feed = Feed(
-                url=dialog.url_edit.text(),
+                url=url,
                 name=dialog.name_edit.text(),
-                auth_user=dialog.auth_user_edit.text() or None,
-                auth_token=dialog.auth_token_edit.text() or None,
             )
             item = QListWidgetItem(f"{feed.name} — {feed.url}")
             item.setData(Qt.ItemDataRole.UserRole, feed)
@@ -190,18 +197,35 @@ class SettingsDialog(QDialog):
         if not current:
             return
         feed = current.data(Qt.ItemDataRole.UserRole)
+        old_url = feed.url
         dialog = FeedEditDialog(feed=feed, parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             feed.name = dialog.name_edit.text()
             feed.url = dialog.url_edit.text()
-            feed.auth_user = dialog.auth_user_edit.text() or None
-            feed.auth_token = dialog.auth_token_edit.text() or None
+
+            username = dialog.auth_user_edit.text() or None
+            token = dialog.auth_token_edit.text() or None
+
+            # If the URL changed, remove credentials for the old URL
+            if feed.url != old_url:
+                delete_credentials(old_url)
+
+            if username and token:
+                store_credentials(feed.url, username, token)
+            elif not username and not token:
+                # Credentials cleared by user
+                delete_credentials(feed.url)
+
             current.setText(f"{feed.name} — {feed.url}")
 
     def _remove_feed(self) -> None:
-        """Remove the selected feed."""
+        """Remove the selected feed and its stored credentials."""
         row = self._feed_list.currentRow()
         if row >= 0:
+            item = self._feed_list.item(row)
+            if item:
+                feed = item.data(Qt.ItemDataRole.UserRole)
+                delete_credentials(feed.url)
             self._feed_list.takeItem(row)
 
     def _import_feeds(self) -> None:
@@ -416,13 +440,14 @@ class ImportPreviewDialog(QDialog):
             if not url:
                 continue
 
+            if auth_user and auth_token:
+                store_credentials(url, auth_user, auth_token)
+
             from src.models import Feed as FeedModel
 
             self.feeds.append(FeedModel(
                 url=url,
                 name=name or url,
-                auth_user=auth_user,
-                auth_token=auth_token,
             ))
         self.accept()
 
@@ -471,10 +496,10 @@ class FeedEditDialog(QDialog):
         if feed:
             self.name_edit.setText(feed.name)
             self.url_edit.setText(feed.url)
-            if feed.auth_user:
-                self.auth_user_edit.setText(feed.auth_user)
-            if feed.auth_token:
-                self.auth_token_edit.setText(feed.auth_token)
+            creds = get_credentials(feed.url)
+            if creds:
+                self.auth_user_edit.setText(creds[0])
+                self.auth_token_edit.setText(creds[1])
 
         layout.addRow("Name:", self.name_edit)
         layout.addRow("URL:", self.url_edit)

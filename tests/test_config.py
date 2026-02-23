@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import patch
 
 from src.config import load_config, load_state, save_config, save_state
 from src.models import AppConfig
@@ -33,6 +34,97 @@ class TestConfig:
         config = AppConfig()
         save_config(config, nested)
         assert (nested / "config.json").exists()
+
+    def test_config_json_no_plaintext_credentials(self, tmp_config_dir, sample_config):
+        """Saved config must never contain auth_user or auth_token."""
+        save_config(sample_config, tmp_config_dir)
+        with open(tmp_config_dir / "config.json") as f:
+            data = json.load(f)
+        feed_data = data["feeds"][0]
+        assert "auth_user" not in feed_data
+        assert "auth_token" not in feed_data
+        assert "has_auth" in feed_data
+
+
+class TestCredentialMigration:
+    """Tests for migrating plaintext credentials to the keyring on load."""
+
+    @patch("src.credential_store.store_credentials")
+    def test_migrate_plaintext_to_keyring(self, mock_store, tmp_config_dir):
+        """Legacy plaintext creds should be migrated to keyring on load."""
+        legacy_data = {
+            "poll_interval_secs": 60,
+            "feeds": [
+                {
+                    "url": "https://example.com/feed",
+                    "name": "Test Feed",
+                    "auth_user": "admin",
+                    "auth_token": "secret123",
+                }
+            ],
+        }
+        with open(tmp_config_dir / "config.json", "w") as f:
+            json.dump(legacy_data, f)
+
+        config = load_config(tmp_config_dir)
+
+        # Credentials should have been stored in keyring
+        mock_store.assert_called_once_with(
+            "https://example.com/feed", "admin", "secret123",
+        )
+
+        # Feed object should no longer have plaintext creds
+        assert config.feeds[0].auth_user is None
+        assert config.feeds[0].auth_token is None
+
+        # Config file should have been re-saved without plaintext creds
+        with open(tmp_config_dir / "config.json") as f:
+            saved = json.load(f)
+        assert "auth_user" not in saved["feeds"][0]
+        assert "auth_token" not in saved["feeds"][0]
+
+    @patch("src.credential_store.store_credentials")
+    def test_migrate_skips_http_feeds(self, mock_store, tmp_config_dir):
+        """Plaintext creds for HTTP feeds should be cleared but not stored."""
+        mock_store.side_effect = ValueError("non-HTTPS")
+        legacy_data = {
+            "poll_interval_secs": 60,
+            "feeds": [
+                {
+                    "url": "http://insecure.example.com/feed",
+                    "name": "Insecure Feed",
+                    "auth_user": "admin",
+                    "auth_token": "secret",
+                }
+            ],
+        }
+        with open(tmp_config_dir / "config.json", "w") as f:
+            json.dump(legacy_data, f)
+
+        config = load_config(tmp_config_dir)
+
+        # Credentials should have been cleared even though migration failed
+        assert config.feeds[0].auth_user is None
+        assert config.feeds[0].auth_token is None
+
+    def test_no_migration_needed(self, tmp_config_dir):
+        """Config without plaintext creds should load without migration."""
+        data = {
+            "poll_interval_secs": 60,
+            "feeds": [
+                {
+                    "url": "https://example.com/feed",
+                    "name": "Test Feed",
+                    "has_auth": True,
+                }
+            ],
+        }
+        with open(tmp_config_dir / "config.json", "w") as f:
+            json.dump(data, f)
+
+        config = load_config(tmp_config_dir)
+        assert config.feeds[0].auth_user is None
+        assert config.feeds[0].auth_token is None
 
 
 class TestState:

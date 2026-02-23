@@ -35,6 +35,10 @@ class Feed:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
 
+        Credentials are never written to the config file.  Instead a
+        ``has_auth`` flag indicates whether credentials are stored in
+        the OS keyring.
+
         Returns:
             Dictionary representation of this Feed.
         """
@@ -44,13 +48,17 @@ class Feed:
             "enabled": self.enabled,
             "sound_file": self.sound_file,
             "last_poll_time": self.last_poll_time,
-            "auth_user": self.auth_user,
-            "auth_token": self.auth_token,
+            "has_auth": bool(self.auth_user and self.auth_token),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Feed:
         """Deserialize from a dictionary.
+
+        Handles both legacy configs (with plaintext ``auth_user``/
+        ``auth_token``) and new configs (with ``has_auth`` flag).
+        Legacy plaintext credentials are preserved in the dataclass
+        fields so that ``load_config`` can migrate them to the keyring.
 
         Args:
             data: Dictionary with feed fields.

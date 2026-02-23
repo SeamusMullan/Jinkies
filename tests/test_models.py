@@ -14,6 +14,24 @@ class TestFeed:
         assert d["sound_file"] is None
         assert d["last_poll_time"] is None
 
+    def test_to_dict_no_plaintext_credentials(self):
+        """to_dict must never include auth_user or auth_token."""
+        feed = Feed(
+            url="https://example.com/feed",
+            name="Auth Feed",
+            auth_user="admin",
+            auth_token="secret",
+        )
+        d = feed.to_dict()
+        assert "auth_user" not in d
+        assert "auth_token" not in d
+        assert d["has_auth"] is True
+
+    def test_to_dict_has_auth_false_when_no_creds(self, sample_feed):
+        """has_auth should be False when no credentials are set."""
+        d = sample_feed.to_dict()
+        assert d["has_auth"] is False
+
     def test_from_dict(self):
         data = {
             "url": "https://test.com/feed",
@@ -32,6 +50,18 @@ class TestFeed:
         feed = Feed.from_dict(data)
         assert feed.enabled is True
         assert feed.sound_file is None
+
+    def test_from_dict_legacy_plaintext_credentials(self):
+        """from_dict should still read legacy auth_user/auth_token for migration."""
+        data = {
+            "url": "https://test.com/feed",
+            "name": "Test",
+            "auth_user": "admin",
+            "auth_token": "secret",
+        }
+        feed = Feed.from_dict(data)
+        assert feed.auth_user == "admin"
+        assert feed.auth_token == "secret"
 
     def test_roundtrip(self, sample_feed):
         restored = Feed.from_dict(sample_feed.to_dict())
