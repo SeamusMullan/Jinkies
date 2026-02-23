@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import feedparser
 from PySide6.QtCore import QThread, Signal
 
+from src.credential_store import get_credentials
 from src.models import Feed, FeedEntry
 
 if TYPE_CHECKING:
@@ -124,6 +125,10 @@ class FeedPoller(QThread):
     def _fetch_feed(self, feed: Feed) -> feedparser.FeedParserDict:
         """Fetch and parse a feed, handling authentication if configured.
 
+        Credentials are retrieved from the OS keyring.  If the feed URL
+        is not HTTPS and credentials exist, the fetch is refused and a
+        ``feed_error`` signal is emitted.
+
         For feeds with auth credentials, fetches the content manually
         with HTTP Basic auth to bypass content-type issues (e.g. Jenkins
         serving Atom feeds as text/html).
@@ -133,9 +138,20 @@ class FeedPoller(QThread):
 
         Returns:
             The parsed feedparser result.
+
+        Raises:
+            ValueError: If auth credentials exist but the URL is not HTTPS.
         """
-        if feed.auth_user and feed.auth_token:
-            credentials = f"{feed.auth_user}:{feed.auth_token}"
+        creds = get_credentials(feed.url)
+        if creds:
+            if not feed.url.startswith("https://"):
+                msg = (
+                    f"Refusing to send credentials over insecure HTTP "
+                    f"for feed: {feed.url}"
+                )
+                raise ValueError(msg)
+            username, token = creds
+            credentials = f"{username}:{token}"
             b64 = base64.b64encode(credentials.encode()).decode()
             req = urllib.request.Request(  # noqa: S310
                 feed.url,
