@@ -18,6 +18,7 @@ from PySide6.QtCore import QThread, Signal
 
 from src.credential_store import get_credentials
 from src.models import Feed, FeedEntry
+from src.url_validation import validate_feed_url
 
 if TYPE_CHECKING:
     pass
@@ -142,6 +143,11 @@ class FeedPoller(QThread):
         Raises:
             ValueError: If auth credentials exist but the URL is not HTTPS.
         """
+        url_error = validate_feed_url(feed.url)
+        if url_error:
+            self.feed_error.emit(feed.url, url_error)
+            return feedparser.parse("")
+
         creds = get_credentials(feed.url)
         if creds:
             if not feed.url.startswith("https://"):

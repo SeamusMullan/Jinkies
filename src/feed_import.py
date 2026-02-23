@@ -12,6 +12,7 @@ from pathlib import Path
 import feedparser
 
 from src.models import Feed
+from src.url_validation import validate_feed_url
 
 
 def import_opml(path: str | Path) -> list[Feed]:
@@ -48,7 +49,7 @@ def _collect_opml_outlines(element: ET.Element, feeds: list[Feed]) -> None:
     """
     for outline in element.iter("outline"):
         xml_url = outline.get("xmlUrl")
-        if xml_url:
+        if xml_url and validate_feed_url(xml_url) is None:
             name = outline.get("title") or outline.get("text") or xml_url
             feeds.append(Feed(url=xml_url, name=name))
 

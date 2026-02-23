@@ -101,6 +101,41 @@ class TestFeedPoller:
 
         assert len(errors) == 1
 
+    def test_file_url_blocked(self, qtbot):
+        feed = Feed(url="file:///etc/passwd", name="Malicious")
+        poller = FeedPoller(feeds=[feed])
+
+        errors = []
+        poller.feed_error.connect(lambda url, msg: errors.append((url, msg)))
+        poller._poll_feed(feed)
+
+        assert len(errors) == 1
+        assert errors[0][0] == "file:///etc/passwd"
+        assert "not allowed" in errors[0][1]
+
+    def test_data_url_blocked(self, qtbot):
+        feed = Feed(url="data:text/xml,<feed/>", name="Malicious")
+        poller = FeedPoller(feeds=[feed])
+
+        errors = []
+        poller.feed_error.connect(lambda url, msg: errors.append((url, msg)))
+        poller._poll_feed(feed)
+
+        assert len(errors) == 1
+        assert "not allowed" in errors[0][1]
+
+    @patch("src.feed_poller.feedparser.parse")
+    def test_https_url_allowed(self, mock_parse, qtbot, mock_feedparser_result):
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Safe")
+        poller = FeedPoller(feeds=[feed])
+
+        errors = []
+        poller.feed_error.connect(lambda url, msg: errors.append((url, msg)))
+        poller._poll_feed(feed)
+
+        assert len(errors) == 0
+
     def test_disabled_feed_not_polled(self, qtbot):
         feed = Feed(url="https://example.com/feed", name="Disabled", enabled=False)
         poller = FeedPoller(feeds=[feed])
