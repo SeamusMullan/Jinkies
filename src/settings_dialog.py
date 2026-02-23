@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.credential_store import delete_credentials, get_credentials, store_credentials
+from src.url_validation import validate_feed_url
 
 if TYPE_CHECKING:
     from src.models import AppConfig, Feed
@@ -437,7 +439,7 @@ class ImportPreviewDialog(QDialog):
 
             name = self._table.item(row, 1).text().strip()
             url = self._table.item(row, 2).text().strip()
-            if not url:
+            if not url or validate_feed_url(url) is not None:
                 continue
 
             if auth_user and auth_token:
@@ -509,6 +511,15 @@ class FeedEditDialog(QDialog):
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.accepted.connect(self.accept)
+        buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _validate_and_accept(self) -> None:
+        """Validate the feed URL before accepting the dialog."""
+        url = self.url_edit.text().strip()
+        error = validate_feed_url(url)
+        if error:
+            QMessageBox.warning(self, "Invalid Feed URL", error)
+            return
+        self.accept()
