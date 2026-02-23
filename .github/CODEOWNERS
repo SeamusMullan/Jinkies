@@ -1,0 +1,15 @@
+# CODEOWNERS
+#
+# Each line is a file pattern followed by one or more owners.
+# Owners are automatically requested for review when a PR touches
+# files matching the pattern.
+#
+# Order matters — the last matching pattern takes precedence.
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Global fallback — all files not matched below
+*                           @SeamusMullan
+
+# CI/CD and build infrastructure require extra scrutiny
+/.github/**                 @SeamusMullan
+/scripts/**                 @SeamusMullan
