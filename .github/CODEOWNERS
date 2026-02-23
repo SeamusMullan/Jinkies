@@ -7,40 +7,9 @@
 # Order matters — the last matching pattern takes precedence.
 # Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Global fallback — catch anything not matched below
+# Global fallback — all files not matched below
 *                           @SeamusMullan
 
-# Application entry point & lifecycle
-/main.py                    @SeamusMullan
-/src/app.py                 @SeamusMullan
-
-# Data models — changes here affect the whole app
-/src/models.py              @SeamusMullan
-
-# Persistence layer — config/state on disk
-/src/config.py              @SeamusMullan
-
-# Feed ingestion pipeline
-/src/feed_poller.py         @SeamusMullan
-/src/feed_import.py         @SeamusMullan
-
-# Notification subsystem
-/src/notifier.py            @SeamusMullan
-
-# Audio subsystem
-/src/audio.py               @SeamusMullan
-
-# UI — dashboard and settings
-/src/dashboard.py           @SeamusMullan
-/src/settings_dialog.py     @SeamusMullan
-
-# Tests — anyone can contribute tests, but owners review
-/tests/                     @SeamusMullan
-
-# CI/CD and build infrastructure
-/.github/                   @SeamusMullan
-/scripts/                   @SeamusMullan
-/jinkies.spec               @SeamusMullan
-
-# Project configuration
-/pyproject.toml             @SeamusMullan
+# CI/CD and build infrastructure require extra scrutiny
+/.github/**                 @SeamusMullan
+/scripts/**                 @SeamusMullan

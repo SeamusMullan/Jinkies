@@ -1,9 +1,9 @@
 ---
 name: Feature request
 about: Suggest a new feature or improvement
-title: "feat: <short description>"
+title: "<Short description of the desired feature>"
 labels: enhancement
-assignees: SeamusMullan
+assignees: ""
 ---
 
 ## Problem / motivation

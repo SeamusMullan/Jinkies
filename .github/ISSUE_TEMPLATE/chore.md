@@ -1,9 +1,9 @@
 ---
 name: Chore / maintenance
 about: Dependency updates, CI changes, refactoring, docs
-title: "chore: <short description>"
+title: "<Short description of the maintenance task>"
 labels: chore
-assignees: SeamusMullan
+assignees: ""
 ---
 
 ## What needs to be done
@@ -16,5 +16,5 @@ assignees: SeamusMullan
 
 ## Acceptance criteria
 
-- [ ]
-- [ ]
+- [ ] <!-- First criterion -->
+- [ ] <!-- Second criterion -->

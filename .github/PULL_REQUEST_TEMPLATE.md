@@ -1,7 +1,7 @@
 ## Summary
 
 <!-- What does this PR do? Link the related issue(s). -->
-Closes #
+<!-- Closes #ISSUE_NUMBER -->
 
 ## Type of change
 
@@ -11,11 +11,12 @@ Closes #
 - [ ] Tests only
 - [ ] Documentation
 - [ ] CI / build / chore
+- [ ] Breaking change (tick this AND one of the above)
 
 ## Checklist
 
-- [ ] I have read [CONTRIBUTING.md](../CONTRIBUTING.md)
-- [ ] My branch targets `dev` (not `main`)
+- [ ] I have read [CONTRIBUTING.md](CONTRIBUTING.md)
+- [ ] My branch targets `main`
 - [ ] All existing tests pass (`uv run pytest`)
 - [ ] Linter passes with no new violations (`uv run ruff check src tests`)
 - [ ] New behaviour is covered by tests

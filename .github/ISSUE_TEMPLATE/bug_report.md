@@ -1,9 +1,9 @@
 ---
 name: Bug report
 about: Something is broken or behaving unexpectedly
-title: "fix: <short description>"
+title: "<Short description of the problem>"
 labels: bug
-assignees: SeamusMullan
+assignees: ""
 ---
 
 ## Describe the bug
@@ -29,8 +29,8 @@ assignees: SeamusMullan
 | Field | Value |
 |---|---|
 | OS | <!-- e.g. Ubuntu 24.04, Windows 11, macOS 14 --> |
-| Python version | <!-- `python --version` --> |
-| Jinkies version / commit | <!-- git log --oneline -1 --> |
+| Python version | <!-- `python --version` (source installs only) --> |
+| Jinkies version | <!-- shown in the title bar, or `git log --oneline -1` for source builds --> |
 | Install method | <!-- source / binary release --> |
 
 ## Logs / screenshots
