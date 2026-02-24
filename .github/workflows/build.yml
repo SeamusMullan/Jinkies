@@ -52,7 +52,7 @@ jobs:
             libxcb-randr0 \
             libxcb-render-util0 \
             libxcb-xfixes0 \
-            libpulse
+            libpulse-dev
 
       - name: Run Linter
         run: uv run ruff check src tests
