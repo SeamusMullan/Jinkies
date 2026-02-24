@@ -51,7 +51,8 @@ jobs:
             libxcb-keysyms1 \
             libxcb-randr0 \
             libxcb-render-util0 \
-            libxcb-xfixes0
+            libxcb-xfixes0 \
+            libpulse
 
       - name: Run Linter
         run: uv run ruff check src tests
