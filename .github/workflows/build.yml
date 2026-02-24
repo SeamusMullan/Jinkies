@@ -83,6 +83,12 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      - name: Run Linter
+        run: uv run ruff check src tests
+
+      - name: Run tests
+        run: uv run pytest
+
       - name: Build (Unix)
         if: runner.os != 'Windows'
         run: |
