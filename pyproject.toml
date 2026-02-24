@@ -8,6 +8,7 @@ dependencies = [
     "feedparser>=6.0.12",
     "keyring>=25.0.0",
     "pyside6>=6.10.2",
+    "pytest>=9.0.2",
 ]
 
 [dependency-groups]
