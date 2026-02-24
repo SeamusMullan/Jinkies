@@ -53,6 +53,12 @@ jobs:
             libxcb-render-util0 \
             libxcb-xfixes0
 
+      - name: Run Linter
+        run: uv run ruff check src tests
+
+      - name: Run tests
+        run: uv run pytest
+
 
 
   build:
@@ -82,12 +88,6 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --dev
-
-      - name: Run Linter
-        run: uv run ruff check src tests
-
-      - name: Run tests
-        run: uv run pytest
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
