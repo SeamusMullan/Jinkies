@@ -57,7 +57,9 @@ class Dashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
+        # TODO: Implement file read for entries to persist between restarts.
         self.entries: list[FeedEntry] = []
+        self._entries_store_location = "store"
         self._errors_today = 0
         self._entries_today = 0
         self._last_poll_time = ""
@@ -66,6 +68,12 @@ class Dashboard(QMainWindow):
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
+
+    def _update_entries_store(self):
+        """Update entires using local store file (merge with existing if any do exist)"""
+        pass
+        with open(self._entries_store_location, "rw") as store:
+            pass
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -279,6 +287,7 @@ class Dashboard(QMainWindow):
 
                 QDesktopServices.openUrl(QUrl(entry.link))
                 entry.seen = True
+                # TODO: Implement a write to file to update entries. (used to persist state after restart)
                 self._refresh_table()
 
     def _on_pause_clicked(self) -> None:
