@@ -7,10 +7,10 @@ actions for managing feeds and controlling polling.
 from __future__ import annotations
 
 import datetime
-from os.path import exists
-from typing import TYPE_CHECKING
 import json
+from typing import TYPE_CHECKING
 
+from src.config import get_config_dir
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
@@ -31,8 +31,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.models import FeedEntry
+
 if TYPE_CHECKING:
-    from src.models import Feed, FeedEntry
+    from src.models import Feed
 
 
 class Dashboard(QMainWindow):
@@ -59,12 +61,11 @@ class Dashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
-        # TODO: Implement file read for entries to persist between restarts.
         self.entries: list[FeedEntry] = []
-        
+
         # Create store at default location if it doesnt exist
-        self._entries_store_location = "store.json"
-        if (not exists(self._entries_store_location)):
+        self._entries_store_location = get_config_dir() / "store.json"
+        if not self._entries_store_location.exists():
             f = open(self._entries_store_location, "w")
             f.write('{"entries": []}')
             f.close()
@@ -85,25 +86,18 @@ class Dashboard(QMainWindow):
         with open(self._entries_store_location, "r") as store:
             try:
                 data = json.load(store)
-            except Exception as e:
-                print(f"Error loading json store: {e}")
-                s = '{"entries": []}'
-                data = json.loads(s)
-
-            print("START STORE DATA")
-            print(data)
-            print("END STORE DATA")
+            except Exception:
+                data = {"entries": []}
 
             # Create a new FeedEntry from the json and append to self.entries
             # Since this happens in Dashboard constructor, we don't need any deduplation logic.
-            for id in data["entries"]:
-                e = FeedEntry( id['feed_url'], id['title'], id['link'], id['published'], id['seen'], id)
-                self.entries.append(e)
+            for entry_data in data["entries"]:
+                self.entries.append(FeedEntry.from_dict(entry_data))
 
     def _save_entries_store(self):
         """Updates the local store file and overwrites with current data inside the class' entries list"""
-        # TODO: Implement JSON Generation from self.entries
-        pass
+        with open(self._entries_store_location, "w") as store:
+            json.dump({"entries": [e.to_dict() for e in self.entries]}, store)
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -318,7 +312,7 @@ class Dashboard(QMainWindow):
 
                 QDesktopServices.openUrl(QUrl(entry.link))
                 entry.seen = True
-                # TODO: Implement a write to file to update entries. (used to persist state after restart)
+                self._save_entries_store()
                 self._refresh_table()
 
     def _on_pause_clicked(self) -> None:
