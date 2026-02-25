@@ -59,6 +59,7 @@ class Dashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
+        # TODO: Implement file read for entries to persist between restarts.
         self.entries: list[FeedEntry] = []
         
         # Create store at default location if it doesnt exist
