@@ -450,6 +450,8 @@ class ImportPreviewDialog(QDialog):
             self.feeds.append(FeedModel(
                 url=url,
                 name=name or url,
+                auth_user=auth_user,
+                auth_token=auth_token,
             ))
         self.accept()
 

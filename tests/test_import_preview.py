@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from src.models import Feed
 from src.settings_dialog import ImportPreviewDialog
 
@@ -89,7 +91,8 @@ class TestImportPreviewDialog:
         qtbot.addWidget(dialog)
         assert dialog._dup_label.text() == ""
 
-    def test_auth_applied_to_all_feeds(self, qtbot):
+    @patch("src.settings_dialog.store_credentials")
+    def test_auth_applied_to_all_feeds(self, _mock_store, qtbot):
         feeds = [
             Feed(url="https://a.com/feed", name="A"),
             Feed(url="https://b.com/feed", name="B"),

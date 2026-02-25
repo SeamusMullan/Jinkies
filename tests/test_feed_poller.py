@@ -124,8 +124,9 @@ class TestFeedPoller:
         assert len(errors) == 1
         assert "not allowed" in errors[0][1]
 
+    @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
-    def test_https_url_allowed(self, mock_parse, qtbot, mock_feedparser_result):
+    def test_https_url_allowed(self, mock_parse, _mock_creds, qtbot, mock_feedparser_result):
         mock_parse.return_value = mock_feedparser_result
         feed = Feed(url="https://example.com/feed.atom", name="Safe")
         poller = FeedPoller(feeds=[feed])
