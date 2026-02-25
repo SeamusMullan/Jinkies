@@ -59,7 +59,6 @@ class Dashboard(QMainWindow):
         super().__init__()
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
-        # TODO: Implement file read for entries to persist between restarts.
         self.entries: list[FeedEntry] = []
         
         # Create store at default location if it doesnt exist
@@ -81,7 +80,7 @@ class Dashboard(QMainWindow):
         self._setup_statusbar()
 
     def _update_entries_store(self):
-        """Update entires using local store file (merge with existing if any do exist)"""
+        """Updates class entires using local store file"""
         with open(self._entries_store_location, "r") as store:
             try:
                 data = json.load(store)
@@ -95,6 +94,7 @@ class Dashboard(QMainWindow):
             print("END STORE DATA")
 
             # Create a new FeedEntry from the json and append to self.entries
+            # Since this happens in Dashboard constructor, we don't need any deduplation logic.
             for id in data["entries"]:
                 e = FeedEntry(
                 id['feed_url'],
@@ -105,6 +105,11 @@ class Dashboard(QMainWindow):
                 id
                 )
                 self.entries.append(e)
+
+    def _save_entries_store(self):
+        """Updates the local store file and overwrites with current data inside the class' entries list"""
+        # TODO: Implement JSON Generation from self.entries
+        pass
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -211,6 +216,7 @@ class Dashboard(QMainWindow):
         self._entries_today += len(new_entries)
         self._refresh_table()
         self._update_stats()
+        self._save_entries_store()
 
     def _refresh_table(self) -> None:
         """Rebuild the entry table from current entries and filter."""
