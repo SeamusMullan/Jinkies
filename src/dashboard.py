@@ -97,14 +97,7 @@ class Dashboard(QMainWindow):
             # Create a new FeedEntry from the json and append to self.entries
             # Since this happens in Dashboard constructor, we don't need any deduplation logic.
             for id in data["entries"]:
-                e = FeedEntry(
-                id['feed_url'],
-                id['title'],
-                id['link'],
-                id['published'],
-                id['seen'],
-                id
-                )
+                e = FeedEntry( id['feed_url'], id['title'], id['link'], id['published'], id['seen'], id)
                 self.entries.append(e)
 
     def _save_entries_store(self):
