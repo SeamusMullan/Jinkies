@@ -7,7 +7,9 @@ actions for managing feeds and controlling polling.
 from __future__ import annotations
 
 import datetime
+from os.path import exists
 from typing import TYPE_CHECKING
+import json
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
@@ -59,7 +61,16 @@ class Dashboard(QMainWindow):
         self.setMinimumSize(800, 500)
         # TODO: Implement file read for entries to persist between restarts.
         self.entries: list[FeedEntry] = []
-        self._entries_store_location = "store"
+        
+        # Create store at default location if it doesnt exist
+        self._entries_store_location = "store.json"
+        if (not exists(self._entries_store_location)):
+            f = open(self._entries_store_location, "w")
+            f.write('{"entries": []}')
+            f.close()
+
+        self._update_entries_store()
+
         self._errors_today = 0
         self._entries_today = 0
         self._last_poll_time = ""
@@ -71,9 +82,29 @@ class Dashboard(QMainWindow):
 
     def _update_entries_store(self):
         """Update entires using local store file (merge with existing if any do exist)"""
-        pass
-        with open(self._entries_store_location, "rw") as store:
-            pass
+        with open(self._entries_store_location, "r") as store:
+            try:
+                data = json.load(store)
+            except Exception as e:
+                print(f"Error loading json store: {e}")
+                s = '{"entries": []}'
+                data = json.loads(s)
+
+            print("START STORE DATA")
+            print(data)
+            print("END STORE DATA")
+
+            # Create a new FeedEntry from the json and append to self.entries
+            for id in data["entries"]:
+                e = FeedEntry(
+                id['feed_url'],
+                id['title'],
+                id['link'],
+                id['published'],
+                id['seen'],
+                id
+                )
+                self.entries.append(e)
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
