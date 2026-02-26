@@ -66,6 +66,7 @@ class Dashboard(QMainWindow):
         # Create store at default location if it doesnt exist
         self._entries_store_location = get_config_dir() / "store.json"
         if not self._entries_store_location.exists():
+            self._entries_store_location.parent.mkdir(parents=True, exist_ok=True)
             f = open(self._entries_store_location, "w")
             f.write('{"entries": []}')
             f.close()
