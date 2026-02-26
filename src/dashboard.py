@@ -82,7 +82,7 @@ class Dashboard(QMainWindow):
         self._setup_statusbar()
 
     def _update_entries_store(self) -> None:
-        """Updates class entires using local store file"""
+        """Updates class entires using local store file."""
         with open(self._entries_store_location) as store:
             try:
                 data = json.load(store)
