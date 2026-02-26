@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -77,8 +79,18 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
         data: Data to serialize as JSON.
     """
     _ensure_dir(path.parent)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    #with open(path, "w", encoding="utf-8") as f:
+    #    json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with open(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
 
 
 def _migrate_plaintext_credentials(config: AppConfig, config_dir: Path) -> bool:
