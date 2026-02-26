@@ -10,7 +10,7 @@ import base64
 import datetime
 import time
 import urllib.request
-from threading import Event
+from threading import Event, Lock
 from typing import TYPE_CHECKING
 
 import feedparser
@@ -56,6 +56,7 @@ class FeedPoller(QThread):
             seen_ids: Set of entry IDs already seen.
         """
         super().__init__()
+        self._feeds_lock = Lock()
         self.feeds = feeds
         self.poll_interval = poll_interval
         self.seen_ids: set[str] = seen_ids or set()
@@ -73,7 +74,9 @@ class FeedPoller(QThread):
             if self.isInterruptionRequested():
                 break
 
-            for feed in self.feeds:
+            with self._feeds_lock:
+                feeds_snapshot = list(self.feeds)
+            for feed in feeds_snapshot:
                 if self.isInterruptionRequested():
                     break
                 if not feed.enabled:
@@ -202,7 +205,8 @@ class FeedPoller(QThread):
         Args:
             feeds: New list of feeds.
         """
-        self.feeds = feeds
+        with self._feeds_lock:
+            self.feeds = feeds
 
     def update_interval(self, interval: int) -> None:
         """Update the polling interval.
