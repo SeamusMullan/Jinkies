@@ -61,7 +61,12 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
-        return json.load(f)
+        try:
+            x = json.load(f)
+            return x
+        except json.JSONDecodeError as e:
+            print(f"Error loading json file {f} with error: {e}")
+            return {}
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
