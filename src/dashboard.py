@@ -10,7 +10,6 @@ import datetime
 import json
 from typing import TYPE_CHECKING
 
-from src.config import get_config_dir
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
@@ -31,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.config import get_config_dir
 from src.models import FeedEntry
 
 if TYPE_CHECKING:
@@ -81,9 +81,9 @@ class Dashboard(QMainWindow):
         self._setup_central()
         self._setup_statusbar()
 
-    def _update_entries_store(self):
+    def _update_entries_store(self) -> None:
         """Updates class entires using local store file"""
-        with open(self._entries_store_location, "r") as store:
+        with open(self._entries_store_location) as store:
             try:
                 data = json.load(store)
             except Exception:
@@ -94,8 +94,8 @@ class Dashboard(QMainWindow):
             for entry_data in data["entries"]:
                 self.entries.append(FeedEntry.from_dict(entry_data))
 
-    def _save_entries_store(self):
-        """Updates the local store file and overwrites with current data inside the class' entries list"""
+    def _save_entries_store(self) -> None:
+        """Updates the local store file with the class' entries list."""
         with open(self._entries_store_location, "w") as store:
             json.dump({"entries": [e.to_dict() for e in self.entries]}, store)
 
