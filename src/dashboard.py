@@ -308,7 +308,7 @@ class Dashboard(QMainWindow):
         reversed_filtered = list(reversed(filtered))
         if 0 <= row < len(reversed_filtered):
             entry = reversed_filtered[row]
-            if entry.link:
+            if entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
                 from PySide6.QtCore import QUrl
 
                 QDesktopServices.openUrl(QUrl(entry.link))
