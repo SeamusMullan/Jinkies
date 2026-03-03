@@ -10,7 +10,7 @@ import datetime
 import json
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -84,8 +84,20 @@ class Dashboard(QMainWindow):
         self._setup_central()
         self._setup_statusbar()
 
+        # If one or more midnights passed while the app was closed, the stored
+        # stats_date will be before today.  Reset now so the counters are always
+        # accurate for the current calendar day, then kick off the timer for
+        # subsequent midnight crossings during this session.
+        if self._stats_date < datetime.date.today():
+            self.reset_daily_stats()
+        self._schedule_daily_reset()
+
     def _update_entries_store(self) -> None:
-        """Updates class entires using local store file."""
+        """Updates class entries using local store file.
+
+        Also loads the persisted stats_date so that missed-midnight resets
+        (i.e. when the app was closed over midnight) can be detected on startup.
+        """
         with open(self._entries_store_location) as store:
             try:
                 data = json.load(store)
@@ -97,10 +109,25 @@ class Dashboard(QMainWindow):
             for entry_data in data["entries"]:
                 self.entries.append(FeedEntry.from_dict(entry_data))
 
+            # Restore the date the daily counters were last reset.  If absent
+            # (e.g. first run after upgrade), default to "yesterday" so that the
+            # startup check below will immediately trigger a reset and save today.
+            raw_date = data.get("stats_date")
+            try:
+                self._stats_date: datetime.date = datetime.date.fromisoformat(raw_date)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                self._stats_date = datetime.date.today() - datetime.timedelta(days=1)
+
     def _save_entries_store(self) -> None:
-        """Updates the local store file with the class' entries list."""
+        """Updates the local store file with the class' entries list and stats_date."""
         with open(self._entries_store_location, "w") as store:
-            json.dump({"entries": [e.to_dict() for e in self.entries]}, store)
+            json.dump(
+                {
+                    "entries": [e.to_dict() for e in self.entries],
+                    "stats_date": self._stats_date.isoformat(),
+                },
+                store,
+            )
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -351,10 +378,40 @@ class Dashboard(QMainWindow):
         self._update_stats()
 
     def reset_daily_stats(self) -> None:
-        """Reset the daily entry and error counters."""
+        """Reset the daily entry and error counters.
+
+        Also records today's date in the store so that, on the next app launch,
+        the startup check can detect any missed midnight resets.
+        """
         self._entries_today = 0
         self._errors_today = 0
+        self._stats_date = datetime.date.today()
+        self._save_entries_store()
         self._update_stats()
+
+    def _schedule_daily_reset(self) -> None:
+        """Schedule reset_daily_stats to fire at the next local midnight.
+
+        Calculates milliseconds until the next midnight by advancing from
+        today's midnight to avoid DST-related off-by-one-hour issues.
+        Uses a single-shot QTimer; once it fires, _on_daily_reset reschedules
+        it so the counters are cleared every day at midnight.
+        """
+        now = datetime.datetime.now()
+        today_midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_midnight = today_midnight + datetime.timedelta(days=1)
+        ms_until_midnight = int((tomorrow_midnight - now).total_seconds() * 1000)
+        # QTimer accepts at most 2^31-1 ms; clamp to ensure validity
+        ms_until_midnight = max(0, min(ms_until_midnight, 2_147_483_647))
+        self._daily_reset_timer = QTimer(self)
+        self._daily_reset_timer.setSingleShot(True)
+        self._daily_reset_timer.timeout.connect(self._on_daily_reset)
+        self._daily_reset_timer.start(ms_until_midnight)
+
+    def _on_daily_reset(self) -> None:
+        """Reset daily stats and reschedule for the next midnight."""
+        self.reset_daily_stats()
+        self._schedule_daily_reset()
 
     def get_last_poll_display(self) -> str:
         """Format the current time for display as last poll time.
