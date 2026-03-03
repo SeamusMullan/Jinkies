@@ -218,3 +218,56 @@ class TestDashboard:
         # Entry with no link must NOT be marked as seen, and store must not exist.
         assert entry.seen is False
         assert not store_path.exists()
+
+    def test_add_entries_evicts_oldest_when_limit_exceeded(self, qtbot):
+        """Oldest entries must be evicted when max_entries is exceeded."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard.max_entries = 3
+
+        entries_a = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title=f"Entry {i}",
+                link=f"https://a.com/{i}",
+                published="2024-01-01",
+                entry_id=f"e{i}",
+            )
+            for i in range(3)
+        ]
+        dashboard.add_entries(entries_a)
+        assert len(dashboard.entries) == 3
+
+        # Adding one more should evict the oldest
+        new_entry = FeedEntry(
+            feed_url="https://a.com/feed",
+            title="Entry 3",
+            link="https://a.com/3",
+            published="2024-01-02",
+            entry_id="e3",
+        )
+        dashboard.add_entries([new_entry])
+        assert len(dashboard.entries) == 3
+        # The oldest entry (e0) must have been evicted
+        ids = [e.entry_id for e in dashboard.entries]
+        assert "e0" not in ids
+        assert "e3" in ids
+
+    def test_add_entries_does_not_evict_when_under_limit(self, qtbot):
+        """No eviction should happen while entries are within the limit."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard.max_entries = 100
+
+        entries = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title=f"Entry {i}",
+                link=f"https://a.com/{i}",
+                published="2024-01-01",
+                entry_id=f"e{i}",
+            )
+            for i in range(10)
+        ]
+        dashboard.add_entries(entries)
+        assert len(dashboard.entries) == 10
