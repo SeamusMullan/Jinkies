@@ -6,7 +6,6 @@ from pathlib import Path
 
 import yaml
 
-
 WORKFLOWS_DIR = Path(__file__).parent.parent / ".github" / "workflows"
 
 
