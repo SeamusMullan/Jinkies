@@ -248,7 +248,8 @@ class SettingsDialog(QDialog):
                 feeds = import_opml(path)
             else:
                 feeds = import_local_feed(path)
-        except ValueError:
+        except ValueError as e:
+            QMessageBox.warning(self, "Import Error", str(e))
             return
 
         if not feeds:
