@@ -136,19 +136,17 @@ jobs:
                   short    = filename
                   rows    += f"| {icon} `{short}` | {fpct}% | {fmissing} |\n"
 
-              coverage_text = f"""### 📊 Coverage: {pct}%
-
-| Covered Lines | Missing Lines | Total Statements |
-|:---:|:---:|:---:|
-| {covered} | {missing} | {total_stmts} |
-
-<details><summary>Per-file coverage</summary>
-
-| File | Coverage | Missing |
-|------|:--------:|:-------:|
-{rows}
-</details>
-"""
+              coverage_text = (
+                  f"### 📊 Coverage: {pct}%\n\n"
+                  "| Covered Lines | Missing Lines | Total Statements |\n"
+                  "|:---:|:---:|:---:|\n"
+                  f"| {covered} | {missing} | {total_stmts} |\n\n"
+                  "<details><summary>Per-file coverage</summary>\n\n"
+                  "| File | Coverage | Missing |\n"
+                  "|------|:--------:|:-------:|\n"
+                  f"{rows}"
+                  "</details>\n"
+              )
           except Exception as e:
               coverage_text = f"_Coverage data unavailable: {e}_\n"
 
@@ -167,12 +165,12 @@ jobs:
               status = "✅ All tests passed" if failures == 0 and errors == 0 \
                        else f"❌ {failures + errors} test(s) failed"
 
-              tests_text = f"""### 🧪 Tests: {status}
-
-| ✅ Passed | ❌ Failed | 💥 Errors | ⏭️ Skipped | 📝 Total |
-|:---:|:---:|:---:|:---:|:---:|
-| {passed} | {failures} | {errors} | {skipped} | {total_t} |
-"""
+              tests_text = (
+                  f"### 🧪 Tests: {status}\n\n"
+                  "| ✅ Passed | ❌ Failed | 💥 Errors | ⏭️ Skipped | 📝 Total |\n"
+                  "|:---:|:---:|:---:|:---:|:---:|\n"
+                  f"| {passed} | {failures} | {errors} | {skipped} | {total_t} |\n"
+              )
               if failures > 0 or errors > 0:
                   tests_text += "<details><summary>Failed tests</summary>\n\n"
                   for tc in root.iter("testcase"):
@@ -193,12 +191,12 @@ jobs:
           workflow = os.environ.get("GITHUB_WORKFLOW",   "CI")
           run_url  = f"{server}/{repo}/actions/runs/{run_id}"
 
-          comment = f"""## 🔬 CI Report
-
-{tests_text}
-{coverage_text}
-> [{workflow} run \#{run_num}]({run_url})
-"""
+          comment = (
+              "## 🔬 CI Report\n\n"
+              f"{tests_text}\n"
+              f"{coverage_text}\n"
+              f"> [{workflow} run \\#{run_num}]({run_url})\n"
+          )
           with open("/tmp/ci_comment.md", "w") as f:
               f.write(comment)
 
