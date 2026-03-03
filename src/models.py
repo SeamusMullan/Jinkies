@@ -6,8 +6,17 @@ Feed, FeedEntry, and AppConfig.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+#: Minimum allowed value for :attr:`AppConfig.poll_interval_secs`.
+_POLL_INTERVAL_MIN: int = 1
+
+#: Set of recognised values for :attr:`AppConfig.notification_style`.
+_VALID_NOTIFICATION_STYLES: frozenset[str] = frozenset({"native", "custom"})
 
 
 @dataclass
@@ -168,18 +177,50 @@ class AppConfig:
     def from_dict(cls, data: dict[str, Any]) -> AppConfig:
         """Deserialize from a dictionary.
 
+        Validates ``poll_interval_secs`` and ``notification_style`` before
+        constructing the instance.  Invalid values are replaced with safe
+        defaults and a warning is emitted so callers can detect and repair
+        corrupt or hand-edited configuration files.
+
+        * ``poll_interval_secs`` is clamped to a minimum of
+          :data:`_POLL_INTERVAL_MIN` (1 second) to prevent busy-loops.
+        * ``notification_style`` must be one of the values in
+          :data:`_VALID_NOTIFICATION_STYLES` (``"native"`` or ``"custom"``);
+          unrecognised values fall back to ``"native"``.
+
         Args:
             data: Dictionary with config fields.
 
         Returns:
             An AppConfig instance.
         """
+        raw_interval = data.get("poll_interval_secs", 60)
+        if raw_interval < _POLL_INTERVAL_MIN:
+            logger.warning(
+                "poll_interval_secs value %r is below the minimum of %d; "
+                "clamping to %d.",
+                raw_interval,
+                _POLL_INTERVAL_MIN,
+                _POLL_INTERVAL_MIN,
+            )
+            raw_interval = _POLL_INTERVAL_MIN
+
+        raw_style = data.get("notification_style", "native")
+        if raw_style not in _VALID_NOTIFICATION_STYLES:
+            logger.warning(
+                "notification_style value %r is not recognised; "
+                "falling back to 'native'. Valid values: %s.",
+                raw_style,
+                sorted(_VALID_NOTIFICATION_STYLES),
+            )
+            raw_style = "native"
+
         return cls(
-            poll_interval_secs=data.get("poll_interval_secs", 60),
+            poll_interval_secs=raw_interval,
             feeds=[Feed.from_dict(f) for f in data.get("feeds", [])],
             sound_map=data.get("sound_map", {
                 "new_entry": "new_entry.wav",
                 "error": "error.wav",
             }),
-            notification_style=data.get("notification_style", "native"),
+            notification_style=raw_style,
         )
