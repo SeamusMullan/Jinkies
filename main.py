@@ -1,4 +1,4 @@
-"""Jinkies — Atom feed monitor entry point.
+"""Jinkies - Atom feed monitor entry point.
 
 Handles path resolution for both frozen (PyInstaller) and
 development environments, then launches the application.

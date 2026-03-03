@@ -308,6 +308,16 @@ class JinkiesApp:
                 :attr:`Dashboard.remove_feed_requested`.
         """
         if 0 <= index < len(self.config.feeds):
+            feed = self.config.feeds[index]
+            reply = QMessageBox.question(
+                self.dashboard,
+                "Remove Feed",
+                f"Remove feed \"{feed.name}\"?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
             self.config.feeds.pop(index)
             self._apply_config_changes()
 
