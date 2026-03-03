@@ -2,11 +2,15 @@
 ; https://jrsoftware.org/isinfo.php
 
 #define MyAppName "Jinkies"
-#define MyAppVersion "0.1.0"
+; MyAppVersion is passed in from build_windows.ps1 via /DMyAppVersion=<ver>
+; Fall back to a placeholder if compiled directly without the build script.
+#ifndef MyAppVersion
+  #define MyAppVersion "0.0.0-dev"
+#endif
 #define MyAppPublisher "SeamusMullan"
 #define MyAppURL "https://github.com/SeamusMullan/Jinkies"
 #define MyAppExeName "Jinkies.exe"
-#define MyAppDescription "Atom feed monitor with audio cues and desktop notifications"
+#define MyAppDescription "Jinkies, my build failed!"
 
 [Setup]
 AppId={{A3F2B1C4-7E5D-4F8A-9C2B-1D6E3F0A8B7C}

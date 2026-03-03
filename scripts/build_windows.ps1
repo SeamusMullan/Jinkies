@@ -28,8 +28,14 @@ if (-not $iscc) {
 }
 
 if ($iscc) {
-    Write-Host "==> Building Windows installer with Inno Setup..."
-    & "$iscc" "installer\windows\jinkies.iss"
+    # Extract version from pyproject.toml (the single source of truth)
+    $versionMatch = (Select-String -Path "pyproject.toml" -Pattern '^version\s*=\s*"([^"]+)"').Matches
+    if (-not $versionMatch -or $versionMatch.Count -eq 0) {
+        throw "Could not extract version from pyproject.toml"
+    }
+    $version = $versionMatch[0].Groups[1].Value
+    Write-Host "==> Building Windows installer (v$version) with Inno Setup..."
+    & "$iscc" "/DMyAppVersion=$version" "installer\windows\jinkies.iss"
     if ($LASTEXITCODE -ne 0) {
         throw "Inno Setup compilation failed (exit code $LASTEXITCODE)"
     }
