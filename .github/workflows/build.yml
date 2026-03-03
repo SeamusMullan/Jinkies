@@ -28,8 +28,36 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      src-changed: ${{ steps.filter.outputs.src }}
+      linux-build-changed: ${{ steps.filter.outputs.linux_build }}
+      macos-build-changed: ${{ steps.filter.outputs.macos_build }}
+      windows-build-changed: ${{ steps.filter.outputs.windows_build }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/**'
+              - 'main.py'
+              - 'pyproject.toml'
+              - 'jinkies.spec'
+            linux_build:
+              - 'scripts/build_linux.sh'
+            macos_build:
+              - 'scripts/build_macos.sh'
+            windows_build:
+              - 'scripts/build_windows.ps1'
+              - 'installer/**'
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -60,36 +88,194 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml
+        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml --cov-report=json --junit-xml=test-results.xml
 
-      - name: Upload coverage report
+      - name: Generate CI report
+        if: always()
+        run: |
+          uv run python3 - <<'PYEOF'
+          import json, xml.etree.ElementTree as ET, os, sys
+
+          # ── Coverage ──────────────────────────────────────────────────────────
+          coverage_text = ""
+          try:
+              with open("coverage.json") as f:
+                  cov = json.load(f)
+              total = cov["totals"]
+              pct   = total["percent_covered_display"]
+              covered = total["covered_lines"]
+              missing = total["missing_lines"]
+              total_stmts = total["num_statements"]
+
+              rows = ""
+              for filename, fdata in sorted(cov["files"].items()):
+                  fpct     = fdata["summary"]["percent_covered_display"]
+                  fmissing = fdata["summary"]["missing_lines"]
+                  icon     = "✅" if int(fpct) >= 80 else "⚠️"
+                  short    = filename
+                  rows    += f"| {icon} `{short}` | {fpct}% | {fmissing} |\n"
+
+              coverage_text = f"""### 📊 Coverage: {pct}%
+
+| Covered Lines | Missing Lines | Total Statements |
+|:---:|:---:|:---:|
+| {covered} | {missing} | {total_stmts} |
+
+<details><summary>Per-file coverage</summary>
+
+| File | Coverage | Missing |
+|------|:--------:|:-------:|
+{rows}
+</details>
+"""
+          except Exception as e:
+              coverage_text = f"_Coverage data unavailable: {e}_\n"
+
+          # ── Test results ──────────────────────────────────────────────────────
+          tests_text = ""
+          try:
+              tree  = ET.parse("test-results.xml")
+              root  = tree.getroot()
+              suite = root.find("testsuite") or root
+              total_t  = int(suite.get("tests",    0))
+              failures = int(suite.get("failures", 0))
+              errors   = int(suite.get("errors",   0))
+              skipped  = int(suite.get("skipped",  0))
+              passed   = total_t - failures - errors - skipped
+
+              status = "✅ All tests passed" if failures == 0 and errors == 0 \
+                       else f"❌ {failures + errors} test(s) failed"
+
+              tests_text = f"""### 🧪 Tests: {status}
+
+| ✅ Passed | ❌ Failed | 💥 Errors | ⏭️ Skipped | 📝 Total |
+|:---:|:---:|:---:|:---:|:---:|
+| {passed} | {failures} | {errors} | {skipped} | {total_t} |
+"""
+              if failures > 0 or errors > 0:
+                  tests_text += "<details><summary>Failed tests</summary>\n\n"
+                  for tc in root.iter("testcase"):
+                      fail = tc.find("failure") or tc.find("error")
+                      if fail is not None:
+                          name = f"{tc.get('classname','')}.{tc.get('name','')}"
+                          msg  = (fail.get("message") or "")[:300]
+                          tests_text += f"- ❌ `{name}`\n  ```\n  {msg}\n  ```\n"
+                  tests_text += "\n</details>\n"
+          except Exception as e:
+              tests_text = f"_Test results unavailable: {e}_\n"
+
+          # ── Assemble comment ──────────────────────────────────────────────────
+          server   = os.environ.get("GITHUB_SERVER_URL",  "https://github.com")
+          repo     = os.environ.get("GITHUB_REPOSITORY", "")
+          run_id   = os.environ.get("GITHUB_RUN_ID",     "")
+          run_num  = os.environ.get("GITHUB_RUN_NUMBER", "")
+          workflow = os.environ.get("GITHUB_WORKFLOW",   "CI")
+          run_url  = f"{server}/{repo}/actions/runs/{run_id}"
+
+          comment = f"""## 🔬 CI Report
+
+{tests_text}
+{coverage_text}
+> [{workflow} run \#{run_num}]({run_url})
+"""
+          with open("/tmp/ci_comment.md", "w") as f:
+              f.write(comment)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "/tmp/summary.md")
+          with open(summary_path, "a") as f:
+              f.write(comment)
+
+          print("CI report generated successfully.")
+          PYEOF
+
+      - name: Upload test and coverage artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: coverage.xml
+          name: test-results
+          path: |
+            coverage.xml
+            coverage.json
+            test-results.xml
+          if-no-files-found: warn
 
+      - name: Post CI report comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          path: /tmp/ci_comment.md
 
+  # ── Per-platform builds ──────────────────────────────────────────────────────
+  # Each build job only runs when relevant files have changed (or on any v* tag).
 
-  build:
+  build-linux:
     needs: lint-and-test
-    if: github.event_name == 'push'
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            script: scripts/build_linux.sh
-            artifact_name: jinkies-linux-x86_64
-            artifact_path: dist/jinkies-linux-x86_64.tar.gz
-          - os: macos-latest
-            script: scripts/build_macos.sh
-            artifact_name: jinkies-macos
-            artifact_path: dist/Jinkies.dmg
-          - os: windows-latest
-            script: scripts/build_windows.ps1
-            artifact_name: jinkies-windows
-            artifact_path: dist/JinkiesSetup.exe
+    if: |
+      github.event_name == 'push' && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.lint-and-test.outputs.src-changed == 'true' ||
+        needs.lint-and-test.outputs.linux-build-changed == 'true'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-    runs-on: ${{ matrix.os }}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Build
+        run: |
+          chmod +x scripts/build_linux.sh
+          scripts/build_linux.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jinkies-linux-x86_64
+          path: dist/jinkies-linux-x86_64.tar.gz
+
+  build-macos:
+    needs: lint-and-test
+    if: |
+      github.event_name == 'push' && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.lint-and-test.outputs.src-changed == 'true' ||
+        needs.lint-and-test.outputs.macos-build-changed == 'true'
+      )
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Build
+        run: |
+          chmod +x scripts/build_macos.sh
+          scripts/build_macos.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jinkies-macos
+          path: dist/Jinkies.dmg
+
+  build-windows:
+    needs: lint-and-test
+    if: |
+      github.event_name == 'push' && (
+        startsWith(github.ref, 'refs/tags/v') ||
+        needs.lint-and-test.outputs.src-changed == 'true' ||
+        needs.lint-and-test.outputs.windows-build-changed == 'true'
+      )
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -100,27 +286,19 @@ jobs:
         run: uv sync --dev
 
       - name: Install Inno Setup
-        if: runner.os == 'Windows'
         run: choco install innosetup --no-progress -y
 
-      - name: Build (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          chmod +x ${{ matrix.script }}
-          ${{ matrix.script }}
-
-      - name: Build (Windows)
-        if: runner.os == 'Windows'
-        run: pwsh ${{ matrix.script }}
+      - name: Build
+        run: pwsh scripts/build_windows.ps1
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
+          name: jinkies-windows
+          path: dist/JinkiesSetup.exe
 
   release:
-    needs: build
+    needs: [build-linux, build-macos, build-windows]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
