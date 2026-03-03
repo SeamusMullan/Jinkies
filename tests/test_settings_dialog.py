@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from src.settings_dialog import FeedEditDialog
+from PySide6.QtWidgets import QMessageBox
+
+from src.models import AppConfig, Feed
+from src.settings_dialog import FeedEditDialog, SettingsDialog
 
 
 class TestFeedEditDialogValidation:
@@ -85,3 +88,43 @@ class TestFeedEditDialogValidation:
 
         mock_warn.assert_not_called()
         mock_accept.assert_called_once()
+
+
+class TestSettingsDialogRemoveFeed:
+    """Tests for SettingsDialog._remove_feed confirmation dialog."""
+
+    def _make_dialog(self, qtbot):
+        feed = Feed(url="https://example.com/feed.atom", name="Example Feed")
+        config = AppConfig(
+            poll_interval_secs=60,
+            feeds=[feed],
+            sound_map={},
+        )
+        dialog = SettingsDialog(config)
+        qtbot.addWidget(dialog)
+        dialog._load_values()
+        return dialog, feed
+
+    def test_remove_feed_confirmed(self, qtbot):
+        """Confirming removal deletes the feed from the list and clears credentials."""
+        dialog, feed = self._make_dialog(qtbot)
+        dialog._feed_list.setCurrentRow(0)
+
+        with patch("src.settings_dialog.QMessageBox.question",
+                   return_value=QMessageBox.StandardButton.Yes), \
+             patch("src.settings_dialog.delete_credentials") as mock_delete:
+            dialog._remove_feed()
+
+        assert dialog._feed_list.count() == 0
+        mock_delete.assert_called_once_with(feed.url)
+
+    def test_remove_feed_cancelled(self, qtbot):
+        """Cancelling the confirmation keeps the feed in the list."""
+        dialog, _feed = self._make_dialog(qtbot)
+        dialog._feed_list.setCurrentRow(0)
+
+        with patch("src.settings_dialog.QMessageBox.question",
+                   return_value=QMessageBox.StandardButton.No):
+            dialog._remove_feed()
+
+        assert dialog._feed_list.count() == 1
