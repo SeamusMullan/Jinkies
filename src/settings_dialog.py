@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.credential_store import delete_credentials, get_credentials, store_credentials
-from src.url_validation import validate_feed_url
+from src.url_validation import check_feed_connectivity, validate_feed_url
 
 if TYPE_CHECKING:
     from src.models import AppConfig, Feed
@@ -520,12 +520,34 @@ class FeedEditDialog(QDialog):
         layout.addRow("Auth User:", self.auth_user_edit)
         layout.addRow("Auth Token:", self.auth_token_edit)
 
+        check_btn = QPushButton("Check connectivity…")
+        check_btn.clicked.connect(self._check_connectivity)
+        layout.addRow("", check_btn)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _check_connectivity(self) -> None:
+        """Perform an optional HEAD-request connectivity check on the entered URL.
+
+        Shows an information or warning dialog with the result.
+        """
+        url = self.url_edit.text().strip()
+        error = validate_feed_url(url)
+        if error:
+            QMessageBox.warning(self, "Invalid Feed URL", error)
+            return
+        error = check_feed_connectivity(url)
+        if error:
+            QMessageBox.warning(self, "Connectivity Check Failed", error)
+        else:
+            QMessageBox.information(
+                self, "Connectivity Check", "Successfully reached the feed URL."
+            )
 
     def _validate_and_accept(self) -> None:
         """Validate the feed name and URL before accepting the dialog.
