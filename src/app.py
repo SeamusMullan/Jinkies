@@ -148,6 +148,12 @@ class JinkiesApp:
         self.dashboard.settings_requested.connect(self._on_settings)
         self.dashboard.pause_requested.connect(self._on_pause_toggle)
 
+        # Track which feeds have already produced an error notification so that
+        # repeated errors for the same broken feed are silenced after the first.
+        # The entry is removed when the feed successfully delivers new entries,
+        # allowing the next error to notify again.
+        self._errored_feeds: set[str] = set()
+
         # Set up poller
         self.poller = FeedPoller(
             feeds=self.config.feeds,
@@ -203,6 +209,11 @@ class JinkiesApp:
         Args:
             entries: List of new FeedEntry objects.
         """
+        # A successful delivery means the feed is healthy; clear any stored
+        # error state so that a future error will notify again.
+        for entry in entries:
+            self._errored_feeds.discard(entry.feed_url)
+
         self.dashboard.add_entries(entries)
         self.audio.play("new_entry")
 
@@ -224,13 +235,20 @@ class JinkiesApp:
     def _on_feed_error(self, url: str, error: str) -> None:
         """Handle a feed polling error.
 
+        Only the first error for each feed URL triggers a notification and
+        sound; subsequent errors for the same URL are recorded in the
+        dashboard but remain silent.  The error state is cleared when the
+        feed next delivers new entries, so a later failure will notify again.
+
         Args:
             url: The feed URL that failed.
             error: The error message.
         """
         self.dashboard.record_error()
-        self.audio.play("error")
-        self.notifier.notify("Jinkies — Error", f"Feed error: {url}\n{error}")
+        if url not in self._errored_feeds:
+            self._errored_feeds.add(url)
+            self.audio.play("error")
+            self.notifier.notify("Jinkies — Error", f"Feed error: {url}\n{error}")
 
     def _on_poll_complete(self) -> None:
         """Handle completion of a polling cycle."""
