@@ -67,3 +67,5 @@ Config files are stored in the platform-appropriate location:
 - Linux: `~/.config/jinkies/`
 - macOS: `~/Library/Application Support/jinkies/`
 - Windows: `%APPDATA%/jinkies/`
+
+For a full reference of all `config.json` fields and their valid values, see [CONFIGURATION.md](CONFIGURATION.md).
