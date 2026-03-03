@@ -42,3 +42,4 @@ convention = "google"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 qt_api = "pyside6"
+addopts = ["-v", "--tb=short"]

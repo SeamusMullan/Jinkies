@@ -60,12 +60,19 @@ jobs:
       - name: Run tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest
+        run: uv run pytest --cov=src --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
 
 
 
   build:
     needs: lint-and-test
+    if: github.event_name == 'push'
     strategy:
       matrix:
         include:
