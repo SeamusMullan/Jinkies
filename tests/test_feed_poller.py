@@ -207,3 +207,19 @@ class TestFeedPollerAuth:
         poller._poll_feed(feed)
 
         assert len(entries) == 2
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_no_auth_fetch_uses_socket_timeout(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """Non-auth feedparser.parse must be called with a socket_timeout."""
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Timed")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        mock_parse.assert_called_once()
+        _, kwargs = mock_parse.call_args
+        assert "socket_timeout" in kwargs, "feedparser.parse must be called with socket_timeout"
+        assert kwargs["socket_timeout"] > 0

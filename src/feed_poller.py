@@ -137,6 +137,10 @@ class FeedPoller(QThread):
         with HTTP Basic auth to bypass content-type issues (e.g. Jenkins
         serving Atom feeds as text/html).
 
+        A 30-second socket timeout is applied to all network fetches so
+        that a slow or unresponsive server cannot block the poller thread
+        indefinitely and prevent a clean application shutdown.
+
         Args:
             feed: The feed to fetch.
 
@@ -169,7 +173,9 @@ class FeedPoller(QThread):
             with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
                 content = resp.read()
             return feedparser.parse(content)
-        return feedparser.parse(feed.url)
+        # Use socket_timeout so a slow or unresponsive server cannot block
+        # the poller thread indefinitely and prevent clean shutdown.
+        return feedparser.parse(feed.url, socket_timeout=30)
 
     def _interruptible_sleep(self, seconds: int) -> None:
         """Sleep in small increments to allow quick shutdown.
