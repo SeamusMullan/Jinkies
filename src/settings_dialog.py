@@ -227,6 +227,15 @@ class SettingsDialog(QDialog):
             item = self._feed_list.item(row)
             if item:
                 feed = item.data(Qt.ItemDataRole.UserRole)
+                reply = QMessageBox.question(
+                    self,
+                    "Remove Feed",
+                    f"Remove feed \"{feed.name}\"?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
                 delete_credentials(feed.url)
             self._feed_list.takeItem(row)
 
