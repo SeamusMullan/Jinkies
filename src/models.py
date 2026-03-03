@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 #: Minimum allowed value for :attr:`AppConfig.poll_interval_secs`.
 _POLL_INTERVAL_MIN: int = 1
 
+#: Minimum allowed value for :attr:`AppConfig.max_entries`.
+_MAX_ENTRIES_MIN: int = 1
+
 #: Set of recognised values for :attr:`AppConfig.notification_style`.
 _VALID_NOTIFICATION_STYLES: frozenset[str] = frozenset({"native", "custom"})
 
@@ -150,6 +153,8 @@ class AppConfig:
         feeds: List of monitored feeds.
         sound_map: Mapping of event type to WAV file path.
         notification_style: Either "native" or "custom".
+        max_entries: Maximum number of feed entries to keep in memory and on
+            disk.  Oldest entries are evicted when the limit is exceeded.
     """
 
     poll_interval_secs: int = 60
@@ -159,6 +164,7 @@ class AppConfig:
         "error": "error.wav",
     })
     notification_style: str = "native"
+    max_entries: int = 10_000
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -171,22 +177,25 @@ class AppConfig:
             "feeds": [f.to_dict() for f in self.feeds],
             "sound_map": self.sound_map,
             "notification_style": self.notification_style,
+            "max_entries": self.max_entries,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AppConfig:
         """Deserialize from a dictionary.
 
-        Validates ``poll_interval_secs`` and ``notification_style`` before
-        constructing the instance.  Invalid values are replaced with safe
-        defaults and a warning is emitted so callers can detect and repair
-        corrupt or hand-edited configuration files.
+        Validates ``poll_interval_secs``, ``notification_style``, and
+        ``max_entries`` before constructing the instance.  Invalid values
+        are replaced with safe defaults and a warning is emitted so callers
+        can detect and repair corrupt or hand-edited configuration files.
 
         * ``poll_interval_secs`` is clamped to a minimum of
           :data:`_POLL_INTERVAL_MIN` (1 second) to prevent busy-loops.
         * ``notification_style`` must be one of the values in
           :data:`_VALID_NOTIFICATION_STYLES` (``"native"`` or ``"custom"``);
           unrecognised values fall back to ``"native"``.
+        * ``max_entries`` is clamped to a minimum of
+          :data:`_MAX_ENTRIES_MIN` (1) to ensure at least one entry is kept.
 
         Args:
             data: Dictionary with config fields.
@@ -215,6 +224,17 @@ class AppConfig:
             )
             raw_style = "native"
 
+        raw_max_entries = data.get("max_entries", 10_000)
+        if raw_max_entries < _MAX_ENTRIES_MIN:
+            logger.warning(
+                "max_entries value %r is below the minimum of %d; "
+                "clamping to %d.",
+                raw_max_entries,
+                _MAX_ENTRIES_MIN,
+                _MAX_ENTRIES_MIN,
+            )
+            raw_max_entries = _MAX_ENTRIES_MIN
+
         return cls(
             poll_interval_secs=raw_interval,
             feeds=[Feed.from_dict(f) for f in data.get("feeds", [])],
@@ -223,4 +243,5 @@ class AppConfig:
                 "error": "error.wav",
             }),
             notification_style=raw_style,
+            max_entries=raw_max_entries,
         )

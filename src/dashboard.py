@@ -49,6 +49,8 @@ class Dashboard(QMainWindow):
 
     Attributes:
         entries: List of currently displayed FeedEntry objects.
+        max_entries: Maximum number of entries to keep; oldest are evicted when
+            this limit is exceeded.
     """
 
     add_feed_requested = Signal()
@@ -64,6 +66,7 @@ class Dashboard(QMainWindow):
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
         self.entries: list[FeedEntry] = []
+        self.max_entries: int = 10_000
 
         # Create store at default location if it doesnt exist
         self._entries_store_location = get_config_dir() / "store.json"
@@ -97,6 +100,8 @@ class Dashboard(QMainWindow):
 
         Also loads the persisted stats_date so that missed-midnight resets
         (i.e. when the app was closed over midnight) can be detected on startup.
+        Entries exceeding :attr:`max_entries` are trimmed (oldest first) after
+        loading so the in-memory list always respects the configured limit.
         """
         with open(self._entries_store_location) as store:
             try:
@@ -108,6 +113,11 @@ class Dashboard(QMainWindow):
             # Since this happens in Dashboard constructor, we don't need any deduplation logic.
             for entry_data in data["entries"]:
                 self.entries.append(FeedEntry.from_dict(entry_data))
+
+            # Enforce the cap immediately so memory usage is bounded even when
+            # the store was written with a larger limit or is externally edited.
+            if len(self.entries) > self.max_entries:
+                self.entries = self.entries[-self.max_entries:]
 
             # Restore the date the daily counters were last reset.  If absent
             # (e.g. first run after upgrade), default to "yesterday" so that the
@@ -227,10 +237,14 @@ class Dashboard(QMainWindow):
     def add_entries(self, new_entries: list[FeedEntry]) -> None:
         """Add new entries to the table and update stats.
 
+        Oldest entries are evicted when :attr:`max_entries` is exceeded.
+
         Args:
             new_entries: List of new FeedEntry objects to display.
         """
         self.entries.extend(new_entries)
+        if len(self.entries) > self.max_entries:
+            self.entries = self.entries[-self.max_entries:]
         self._entries_today += len(new_entries)
         self._refresh_table()
         self._update_stats()

@@ -154,3 +154,38 @@ class TestAppConfig:
         restored = AppConfig.from_dict(sample_config.to_dict())
         assert restored.poll_interval_secs == sample_config.poll_interval_secs
         assert len(restored.feeds) == len(sample_config.feeds)
+
+    def test_default_max_entries(self):
+        """AppConfig should default max_entries to 10,000."""
+        config = AppConfig()
+        assert config.max_entries == 10_000
+
+    def test_to_dict_includes_max_entries(self):
+        """to_dict should include max_entries."""
+        config = AppConfig(max_entries=500)
+        d = config.to_dict()
+        assert d["max_entries"] == 500
+
+    def test_from_dict_max_entries(self):
+        """from_dict should read max_entries from the data."""
+        config = AppConfig.from_dict({"max_entries": 250})
+        assert config.max_entries == 250
+
+    def test_from_dict_max_entries_default_when_absent(self):
+        """from_dict should default max_entries to 10,000 when absent."""
+        config = AppConfig.from_dict({})
+        assert config.max_entries == 10_000
+
+    def test_from_dict_max_entries_zero_clamped(self, caplog):
+        """max_entries of 0 should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"max_entries": 0})
+        assert config.max_entries == 1
+        assert "max_entries" in caplog.text
+
+    def test_from_dict_max_entries_negative_clamped(self, caplog):
+        """Negative max_entries should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"max_entries": -100})
+        assert config.max_entries == 1
+        assert "max_entries" in caplog.text
