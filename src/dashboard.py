@@ -242,10 +242,12 @@ class Dashboard(QMainWindow):
         Args:
             new_entries: List of new FeedEntry objects to display.
         """
-        self.entries.extend(new_entries)
+        existing_ids = {e.entry_id for e in self.entries}
+        unique_new = [e for e in new_entries if e.entry_id not in existing_ids]
+        self.entries.extend(unique_new)
         if len(self.entries) > self.max_entries:
             self.entries = self.entries[-self.max_entries:]
-        self._entries_today += len(new_entries)
+        self._entries_today += len(unique_new)
         self._refresh_table()
         self._update_stats()
         self._save_entries_store()

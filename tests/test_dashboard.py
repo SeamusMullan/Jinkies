@@ -219,10 +219,12 @@ class TestDashboard:
         assert entry.seen is False
         assert not store_path.exists()
 
-    def test_add_entries_evicts_oldest_when_limit_exceeded(self, qtbot):
+    def test_add_entries_evicts_oldest_when_limit_exceeded(self, qtbot, tmp_path):
         """Oldest entries must be evicted when max_entries is exceeded."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = []
         dashboard.max_entries = 3
 
         entries_a = [
@@ -253,10 +255,12 @@ class TestDashboard:
         assert "e0" not in ids
         assert "e3" in ids
 
-    def test_add_entries_does_not_evict_when_under_limit(self, qtbot):
+    def test_add_entries_does_not_evict_when_under_limit(self, qtbot, tmp_path):
         """No eviction should happen while entries are within the limit."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = []
         dashboard.max_entries = 100
 
         entries = [
