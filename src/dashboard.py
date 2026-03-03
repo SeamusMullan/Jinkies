@@ -81,10 +81,21 @@ class Dashboard(QMainWindow):
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
+
+        # If one or more midnights passed while the app was closed, the stored
+        # stats_date will be before today.  Reset now so the counters are always
+        # accurate for the current calendar day, then kick off the timer for
+        # subsequent midnight crossings during this session.
+        if self._stats_date < datetime.date.today():
+            self.reset_daily_stats()
         self._schedule_daily_reset()
 
     def _update_entries_store(self) -> None:
-        """Updates class entires using local store file."""
+        """Updates class entries using local store file.
+
+        Also loads the persisted stats_date so that missed-midnight resets
+        (i.e. when the app was closed over midnight) can be detected on startup.
+        """
         with open(self._entries_store_location) as store:
             try:
                 data = json.load(store)
@@ -96,10 +107,25 @@ class Dashboard(QMainWindow):
             for entry_data in data["entries"]:
                 self.entries.append(FeedEntry.from_dict(entry_data))
 
+            # Restore the date the daily counters were last reset.  If absent
+            # (e.g. first run after upgrade), default to "yesterday" so that the
+            # startup check below will immediately trigger a reset and save today.
+            raw_date = data.get("stats_date")
+            try:
+                self._stats_date: datetime.date = datetime.date.fromisoformat(raw_date)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                self._stats_date = datetime.date.today() - datetime.timedelta(days=1)
+
     def _save_entries_store(self) -> None:
-        """Updates the local store file with the class' entries list."""
+        """Updates the local store file with the class' entries list and stats_date."""
         with open(self._entries_store_location, "w") as store:
-            json.dump({"entries": [e.to_dict() for e in self.entries]}, store)
+            json.dump(
+                {
+                    "entries": [e.to_dict() for e in self.entries],
+                    "stats_date": self._stats_date.isoformat(),
+                },
+                store,
+            )
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -335,9 +361,15 @@ class Dashboard(QMainWindow):
         self._update_stats()
 
     def reset_daily_stats(self) -> None:
-        """Reset the daily entry and error counters."""
+        """Reset the daily entry and error counters.
+
+        Also records today's date in the store so that, on the next app launch,
+        the startup check can detect any missed midnight resets.
+        """
         self._entries_today = 0
         self._errors_today = 0
+        self._stats_date = datetime.date.today()
+        self._save_entries_store()
         self._update_stats()
 
     def _schedule_daily_reset(self) -> None:

@@ -82,6 +82,33 @@ class TestDashboard:
         assert dashboard._entries_today == 0
         assert dashboard._errors_today == 0
 
+    def test_reset_daily_stats_updates_stats_date(self, qtbot):
+        import datetime
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard.reset_daily_stats()
+        assert dashboard._stats_date == datetime.date.today()
+
+    def test_missed_midnight_resets_counters_on_startup(self, qtbot, monkeypatch, tmp_path):
+        """Counters should be zeroed when stats_date in store is before today."""
+        import datetime
+        import json
+
+        # Write a store whose stats_date is in the past
+        store = tmp_path / "store.json"
+        past_date = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
+        store.write_text(json.dumps({"entries": [], "stats_date": past_date}))
+
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        # The startup code should have reset and advanced stats_date to today
+        assert dashboard._stats_date == datetime.date.today()
+        assert dashboard._entries_today == 0
+        assert dashboard._errors_today == 0
+
     def test_daily_reset_timer_scheduled(self, qtbot):
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
