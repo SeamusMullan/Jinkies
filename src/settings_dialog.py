@@ -518,7 +518,14 @@ class FeedEditDialog(QDialog):
         layout.addWidget(buttons)
 
     def _validate_and_accept(self) -> None:
-        """Validate the feed URL before accepting the dialog."""
+        """Validate the feed name and URL before accepting the dialog.
+
+        Shows a warning and keeps the dialog open if the name is blank or
+        the URL is empty / uses a disallowed scheme.
+        """
+        if not self.name_edit.text().strip():
+            QMessageBox.warning(self, "Invalid Feed Name", "Feed name must not be empty.")
+            return
         url = self.url_edit.text().strip()
         error = validate_feed_url(url)
         if error:
