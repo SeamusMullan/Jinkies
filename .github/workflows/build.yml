@@ -80,7 +80,7 @@ jobs:
           - os: windows-latest
             script: scripts/build_windows.ps1
             artifact_name: jinkies-windows
-            artifact_path: dist/Jinkies.exe
+            artifact_path: dist/JinkiesSetup.exe
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -91,6 +91,10 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --dev
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
 
       - name: Build (Unix)
         if: runner.os != 'Windows'
