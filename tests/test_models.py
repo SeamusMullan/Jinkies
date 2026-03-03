@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from src.models import AppConfig, Feed, FeedEntry
 
 
@@ -120,6 +122,33 @@ class TestAppConfig:
         assert config.poll_interval_secs == 90
         assert len(config.feeds) == 1
         assert config.notification_style == "custom"
+
+    def test_from_dict_poll_interval_zero_clamped(self, caplog):
+        """poll_interval_secs of 0 should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"poll_interval_secs": 0})
+        assert config.poll_interval_secs == 1
+        assert "poll_interval_secs" in caplog.text
+
+    def test_from_dict_poll_interval_negative_clamped(self, caplog):
+        """Negative poll_interval_secs should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"poll_interval_secs": -5})
+        assert config.poll_interval_secs == 1
+        assert "poll_interval_secs" in caplog.text
+
+    def test_from_dict_invalid_notification_style_falls_back(self, caplog):
+        """An unknown notification_style should fall back to 'native' with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"notification_style": "toast"})
+        assert config.notification_style == "native"
+        assert "notification_style" in caplog.text
+
+    def test_from_dict_valid_notification_styles_accepted(self):
+        """Both 'native' and 'custom' should be accepted without warnings."""
+        for style in ("native", "custom"):
+            config = AppConfig.from_dict({"notification_style": style})
+            assert config.notification_style == style
 
     def test_roundtrip(self, sample_config):
         restored = AppConfig.from_dict(sample_config.to_dict())

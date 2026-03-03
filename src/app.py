@@ -337,11 +337,17 @@ class JinkiesApp:
         save_state(self._state)
 
     def _quit(self) -> None:
-        """Shut down the application cleanly."""
+        """Shut down the application cleanly.
+
+        State is persisted first so that it is always written, even if the
+        poller thread does not stop within the wait timeout (e.g. it is
+        blocked in a network request).  The poller is then asked to stop and
+        the application exits after a short grace period.
+        """
+        self._save_state()
         self.poller.requestInterruption()
         self.poller.resume()  # Unblock if paused
         self.poller.wait(5000)
-        self._save_state()
         self._tray.hide()
         self.app.quit()
 
