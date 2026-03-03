@@ -42,7 +42,8 @@ class Dashboard(QMainWindow):
 
     Signals:
         add_feed_requested: Emitted when the Add Feed button is clicked.
-        remove_feed_requested: Emitted when the Remove Feed button is clicked.
+        remove_feed_requested(int): Emitted with the zero-based index of the
+            feed to remove when the Remove Feed button is clicked.
         settings_requested: Emitted when the Settings button is clicked.
         pause_requested: Emitted when Pause/Resume is toggled.
 
@@ -51,7 +52,8 @@ class Dashboard(QMainWindow):
     """
 
     add_feed_requested = Signal()
-    remove_feed_requested = Signal()
+    #: Emitted with the zero-based index of the feed to remove.
+    remove_feed_requested = Signal(int)
     import_feeds_requested = Signal()
     settings_requested = Signal()
     pause_requested = Signal()
@@ -110,7 +112,7 @@ class Dashboard(QMainWindow):
         self._add_feed_action.triggered.connect(self.add_feed_requested.emit)
 
         self._remove_feed_action = toolbar.addAction("Remove Feed")
-        self._remove_feed_action.triggered.connect(self.remove_feed_requested.emit)
+        self._remove_feed_action.triggered.connect(self._on_remove_feed_clicked)
 
         self._import_feeds_action = toolbar.addAction("Import Feeds")
         self._import_feeds_action.triggered.connect(self.import_feeds_requested.emit)
@@ -319,6 +321,17 @@ class Dashboard(QMainWindow):
                 entry.seen = True
                 self._save_entries_store()
                 self._refresh_table()
+
+    def _on_remove_feed_clicked(self) -> None:
+        """Emit remove_feed_requested with the index of the currently selected feed.
+
+        Reads the current row from the feed list and emits
+        :attr:`remove_feed_requested` with that index so callers never
+        need to access the private ``_feed_list`` widget directly.
+        """
+        index = self._feed_list.currentRow()
+        if index >= 0:
+            self.remove_feed_requested.emit(index)
 
     def _on_pause_clicked(self) -> None:
         """Toggle the pause state and emit the signal."""

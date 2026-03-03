@@ -91,6 +91,36 @@ class TestDashboard:
         with qtbot.waitSignal(dashboard.pause_requested, timeout=1000):
             dashboard._on_pause_clicked()
 
+    def test_remove_feed_signal_emits_index(self, qtbot):
+        """remove_feed_requested must carry the selected row index."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard._feed_list.setCurrentRow(1)
+
+        with qtbot.waitSignal(dashboard.remove_feed_requested, timeout=1000) as blocker:
+            dashboard._on_remove_feed_clicked()
+
+        assert blocker.args == [1]
+
+    def test_remove_feed_signal_not_emitted_when_nothing_selected(self, qtbot):
+        """remove_feed_requested must not be emitted when no row is selected."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        # No row selected (currentRow() == -1)
+        dashboard._feed_list.setCurrentRow(-1)
+
+        signals = []
+        dashboard.remove_feed_requested.connect(lambda idx: signals.append(idx))
+        dashboard._on_remove_feed_clicked()
+
+        assert signals == []
     def test_double_click_persists_seen_state(self, qtbot, tmp_path):
         """Double-clicking an entry marks it seen and flushes the state to disk."""
         dashboard = Dashboard()

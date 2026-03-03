@@ -300,11 +300,15 @@ class JinkiesApp:
         self.config.feeds.extend(added)
         self._apply_config_changes()
 
-    def _on_remove_feed(self) -> None:
-        """Remove the selected feed from the feed list."""
-        selected = self.dashboard._feed_list.currentRow()
-        if 0 <= selected < len(self.config.feeds):
-            self.config.feeds.pop(selected)
+    def _on_remove_feed(self, index: int) -> None:
+        """Remove the feed at *index* from the config and refresh all components.
+
+        Args:
+            index: Zero-based position of the feed to remove, as emitted by
+                :attr:`Dashboard.remove_feed_requested`.
+        """
+        if 0 <= index < len(self.config.feeds):
+            self.config.feeds.pop(index)
             self._apply_config_changes()
 
     def _on_settings(self) -> None:
