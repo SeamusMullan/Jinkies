@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QListWidgetItem, QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 from src.models import AppConfig, Feed
 from src.settings_dialog import FeedEditDialog, SettingsDialog
