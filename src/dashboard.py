@@ -293,6 +293,10 @@ class Dashboard(QMainWindow):
     def _on_entry_double_click(self, index: object) -> None:
         """Open the entry link in the default browser on double-click.
 
+        Marks the entry as seen and immediately persists the updated state
+        to disk, so the seen status survives application restarts even if
+        the next periodic save has not yet occurred.
+
         Args:
             index: The model index of the double-clicked row.
         """
