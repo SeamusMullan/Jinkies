@@ -82,6 +82,14 @@ class TestDashboard:
         assert dashboard._entries_today == 0
         assert dashboard._errors_today == 0
 
+    def test_daily_reset_timer_scheduled(self, qtbot):
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        # A single-shot timer should be active and scheduled for midnight
+        assert hasattr(dashboard, "_daily_reset_timer")
+        assert dashboard._daily_reset_timer.isSingleShot()
+        assert dashboard._daily_reset_timer.isActive()
+
     def test_pause_signal(self, qtbot):
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
