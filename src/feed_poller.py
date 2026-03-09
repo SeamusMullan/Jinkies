@@ -38,6 +38,8 @@ class FeedPoller(QThread):
         new_entries_found: Emitted with a list of new FeedEntry objects.
         feed_error: Emitted with (feed_url, error_message) on failure.
         poll_complete: Emitted after each full polling cycle.
+        poll_time_updated: Emitted with (feed_url, iso_timestamp) after a
+            successful poll so the main thread can update the Feed object.
 
     Attributes:
         feeds: List of Feed objects to poll.
@@ -48,6 +50,7 @@ class FeedPoller(QThread):
     new_entries_found = Signal(list)
     feed_error = Signal(str, str)
     poll_complete = Signal()
+    poll_time_updated = Signal(str, str)
 
     def __init__(
         self,
@@ -125,7 +128,10 @@ class FeedPoller(QThread):
                     )
                 )
 
-            feed.last_poll_time = datetime.datetime.now(tz=datetime.UTC).isoformat()
+            self.poll_time_updated.emit(
+                feed.url,
+                datetime.datetime.now(tz=datetime.UTC).isoformat(),
+            )
 
             if new_entries:
                 self.new_entries_found.emit(new_entries)

@@ -61,6 +61,34 @@ class TestFeedPoller:
 
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
+    def test_poll_feed_emits_poll_time_updated(
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
+    ):
+        mock_parse.return_value = mock_feedparser_result
+        poller = FeedPoller(feeds=[sample_feed])
+
+        updates = []
+        poller.poll_time_updated.connect(lambda url, ts: updates.append((url, ts)))
+        poller._poll_feed(sample_feed)
+
+        assert len(updates) == 1
+        assert updates[0][0] == sample_feed.url
+        assert updates[0][1]  # non-empty ISO timestamp
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_poll_feed_does_not_mutate_last_poll_time(
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
+    ):
+        mock_parse.return_value = mock_feedparser_result
+        poller = FeedPoller(feeds=[sample_feed])
+
+        assert sample_feed.last_poll_time is None
+        poller._poll_feed(sample_feed)
+        assert sample_feed.last_poll_time is None  # not mutated by poller thread
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
     def test_poll_feed_skips_seen_entries(
         self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
     ):
