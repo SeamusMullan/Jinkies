@@ -108,6 +108,45 @@ class TestImportOpml:
         feeds = import_opml(opml_file)
         assert feeds[0].name == "Text Name"
 
+    @pytest.mark.parametrize("bad_url", [
+        "file:///etc/passwd",
+        "file:///home/user/.ssh/id_rsa",
+        "ftp://example.com/feed.xml",
+        "data:text/xml,feed",
+        "javascript:alert(1)",
+    ])
+    def test_rejects_non_http_scheme(self, tmp_path, bad_url):
+        opml_file = tmp_path / "bad_scheme.opml"
+        opml_file.write_text(f"""\
+<?xml version="1.0"?>
+<opml version="2.0">
+  <body>
+    <outline type="rss" text="Bad Feed" xmlUrl="{bad_url}"/>
+  </body>
+</opml>
+""")
+        feeds = import_opml(opml_file)
+        assert feeds == []
+
+    def test_filters_invalid_schemes_from_mixed_opml(self, tmp_path):
+        opml_file = tmp_path / "mixed.opml"
+        opml_file.write_text("""\
+<?xml version="1.0"?>
+<opml version="2.0">
+  <body>
+    <outline type="rss" text="Valid Feed"
+             xmlUrl="https://example.com/feed"/>
+    <outline type="rss" text="Local File"
+             xmlUrl="file:///etc/passwd"/>
+    <outline type="rss" text="FTP Feed"
+             xmlUrl="ftp://example.com/feed.xml"/>
+  </body>
+</opml>
+""")
+        feeds = import_opml(opml_file)
+        assert len(feeds) == 1
+        assert feeds[0].url == "https://example.com/feed"
+
 
 class TestImportLocalFeed:
     def test_parses_atom_feed(self, tmp_path):
