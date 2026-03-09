@@ -199,6 +199,7 @@ class JinkiesApp:
         self.poller.new_entries_found.connect(self._on_new_entries)
         self.poller.feed_error.connect(self._on_feed_error)
         self.poller.poll_complete.connect(self._on_poll_complete)
+        self.poller.poll_time_updated.connect(self._on_poll_time_updated)
         self.poller.start()
 
     def _setup_tray_menu(self) -> None:
@@ -292,6 +293,21 @@ class JinkiesApp:
         """Handle completion of a polling cycle."""
         time_str = datetime.datetime.now(tz=datetime.UTC).strftime("%H:%M:%S UTC")
         self.dashboard.set_last_poll_time(time_str)
+
+    def _on_poll_time_updated(self, url: str, timestamp: str) -> None:
+        """Update the last-poll timestamp on the matching feed.
+
+        This slot runs on the main thread, avoiding unsynchronized
+        mutation of :attr:`Feed.last_poll_time` from the poller thread.
+
+        Args:
+            url: The feed URL that was polled.
+            timestamp: ISO 8601 timestamp of the poll.
+        """
+        for feed in self.config.feeds:
+            if feed.url == url:
+                feed.last_poll_time = timestamp
+                break
 
     def _on_pause_toggle(self) -> None:
         """Toggle polling pause state."""
