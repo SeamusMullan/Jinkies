@@ -115,6 +115,7 @@ class SettingsDialog(QDialog):
         feed_layout = QVBoxLayout()
 
         self._feed_list = QListWidget()
+        self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         feed_layout.addWidget(self._feed_list)
 
         feed_buttons = QHBoxLayout()
@@ -221,22 +222,39 @@ class SettingsDialog(QDialog):
             current.setText(f"{feed.name} — {feed.url}")
 
     def _remove_feed(self) -> None:
-        """Remove the selected feed and its stored credentials."""
-        row = self._feed_list.currentRow()
-        if row >= 0:
-            item = self._feed_list.item(row)
-            if item:
-                feed = item.data(Qt.ItemDataRole.UserRole)
-                reply = QMessageBox.question(
-                    self,
-                    "Remove Feed",
-                    f"Remove feed \"{feed.name}\"?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if reply != QMessageBox.StandardButton.Yes:
-                    return
-                delete_credentials(feed.url)
+        """Remove the selected feed(s) and their stored credentials."""
+        selected_items = self._feed_list.selectedItems()
+        if not selected_items:
+            return
+
+        # Sort by row so the confirmation list and removal order are predictable
+        items_with_rows = sorted(
+            [(self._feed_list.row(item), item) for item in selected_items]
+        )
+        rows = [row for row, _ in items_with_rows]
+        feeds = [item.data(Qt.ItemDataRole.UserRole) for _, item in items_with_rows]
+
+        if len(rows) == 1:
+            title = "Remove Feed"
+            msg = f"Remove feed \"{feeds[0].name}\"?"
+        else:
+            names = "\n".join(f"  \u2022 {f.name}" for f in feeds)
+            title = "Remove Feeds"
+            msg = f"Remove {len(rows)} feeds?\n\n{names}"
+
+        reply = QMessageBox.question(
+            self,
+            title,
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        for feed in feeds:
+            delete_credentials(feed.url)
+        for row in sorted(rows, reverse=True):
             self._feed_list.takeItem(row)
 
     def _import_feeds(self) -> None:

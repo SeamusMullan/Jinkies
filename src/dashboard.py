@@ -42,8 +42,8 @@ class Dashboard(QMainWindow):
 
     Signals:
         add_feed_requested: Emitted when the Add Feed button is clicked.
-        remove_feed_requested(int): Emitted with the zero-based index of the
-            feed to remove when the Remove Feed button is clicked.
+        remove_feed_requested(list): Emitted with the list of zero-based indices
+            of the feeds to remove when the Remove Feed button is clicked.
         settings_requested: Emitted when the Settings button is clicked.
         pause_requested: Emitted when Pause/Resume is toggled.
 
@@ -54,8 +54,8 @@ class Dashboard(QMainWindow):
     """
 
     add_feed_requested = Signal()
-    #: Emitted with the zero-based index of the feed to remove.
-    remove_feed_requested = Signal(int)
+    #: Emitted with a list of zero-based indices of the feeds to remove.
+    remove_feed_requested = Signal(list)
     import_feeds_requested = Signal()
     settings_requested = Signal()
     pause_requested = Signal()
@@ -185,6 +185,7 @@ class Dashboard(QMainWindow):
 
         self._feed_list = QListWidget()
         self._feed_list.setMaximumWidth(220)
+        self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         splitter.addWidget(self._feed_list)
 
         self._entry_table = QTableWidget(0, 4)
@@ -366,15 +367,15 @@ class Dashboard(QMainWindow):
                 self._refresh_table()
 
     def _on_remove_feed_clicked(self) -> None:
-        """Emit remove_feed_requested with the index of the currently selected feed.
+        """Emit remove_feed_requested with the indices of all selected feeds.
 
-        Reads the current row from the feed list and emits
-        :attr:`remove_feed_requested` with that index so callers never
-        need to access the private ``_feed_list`` widget directly.
+        Collects all selected rows from the feed list and emits
+        :attr:`remove_feed_requested` with a sorted list of those indices so
+        callers never need to access the private ``_feed_list`` widget directly.
         """
-        index = self._feed_list.currentRow()
-        if index >= 0:
-            self.remove_feed_requested.emit(index)
+        indices = sorted({idx.row() for idx in self._feed_list.selectedIndexes()})
+        if indices:
+            self.remove_feed_requested.emit(indices)
 
     def _on_pause_clicked(self) -> None:
         """Toggle the pause state and emit the signal."""

@@ -127,7 +127,7 @@ class TestDashboard:
             dashboard._on_pause_clicked()
 
     def test_remove_feed_signal_emits_index(self, qtbot):
-        """remove_feed_requested must carry the selected row index."""
+        """remove_feed_requested must carry a list containing the selected row index."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         feeds = [
@@ -140,7 +140,26 @@ class TestDashboard:
         with qtbot.waitSignal(dashboard.remove_feed_requested, timeout=1000) as blocker:
             dashboard._on_remove_feed_clicked()
 
-        assert blocker.args == [1]
+        assert blocker.args == [[1]]
+
+    def test_remove_feed_signal_emits_multiple_indices(self, qtbot):
+        """remove_feed_requested must carry all selected row indices."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+            Feed(url="https://c.com/feed", name="Feed C"),
+        ]
+        dashboard.update_feeds(feeds)
+        # Select rows 0 and 2 explicitly
+        dashboard._feed_list.item(0).setSelected(True)
+        dashboard._feed_list.item(2).setSelected(True)
+
+        with qtbot.waitSignal(dashboard.remove_feed_requested, timeout=1000) as blocker:
+            dashboard._on_remove_feed_clicked()
+
+        assert blocker.args == [[0, 2]]
 
     def test_remove_feed_signal_not_emitted_when_nothing_selected(self, qtbot):
         """remove_feed_requested must not be emitted when no row is selected."""
