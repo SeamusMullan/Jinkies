@@ -82,6 +82,7 @@ class Dashboard(QMainWindow):
         self._entries_today = 0
         self._last_poll_time = ""
         self._is_paused = False
+        self._feed_errors: dict[str, str] = {}
 
         self._setup_toolbar()
         self._setup_central()
@@ -230,8 +231,14 @@ class Dashboard(QMainWindow):
 
         for feed in feeds:
             item = QListWidgetItem(feed.name)
-            color = QColor(0, 180, 0) if feed.enabled else QColor(150, 150, 150)
-            item.setForeground(color)
+            item.setData(Qt.ItemDataRole.UserRole, feed.url)
+            item.setData(Qt.ItemDataRole.UserRole + 1, feed.enabled)
+            if feed.url in self._feed_errors:
+                item.setForeground(QColor(200, 50, 50))
+                item.setToolTip(f"Error: {self._feed_errors[feed.url]}")
+            else:
+                color = QColor(0, 180, 0) if feed.enabled else QColor(150, 150, 150)
+                item.setForeground(color)
             self._feed_list.addItem(item)
             self._filter_combo.addItem(feed.name)
 
@@ -306,6 +313,52 @@ class Dashboard(QMainWindow):
         """Increment the error counter and update stats display."""
         self._errors_today += 1
         self._update_stats()
+
+    def mark_feed_error(self, url: str, error: str) -> None:
+        """Mark a feed as errored in the feed list and show a status bar message.
+
+        Changes the feed list item to red and adds a tooltip with the error
+        message.  A transient message is also shown in the status bar.
+
+        Args:
+            url: The feed URL that produced the error.
+            error: The error message to display.
+        """
+        self._feed_errors[url] = error
+        self._update_feed_item_state(url)
+        self._statusbar.showMessage(f"Feed error: {error}", 8000)
+
+    def clear_feed_error(self, url: str) -> None:
+        """Remove the error state for a feed, restoring its normal appearance.
+
+        Restores the feed list item to green and clears any error tooltip.
+
+        Args:
+            url: The feed URL whose error state should be cleared.
+        """
+        if url not in self._feed_errors:
+            return
+        self._feed_errors.pop(url)
+        self._update_feed_item_state(url)
+
+    def _update_feed_item_state(self, url: str) -> None:
+        """Update the colour and tooltip of the feed list item for *url*.
+
+        Args:
+            url: The feed URL whose list item should be updated.
+        """
+        for i in range(self._feed_list.count()):
+            item = self._feed_list.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == url:
+                if url in self._feed_errors:
+                    item.setForeground(QColor(200, 50, 50))
+                    item.setToolTip(f"Error: {self._feed_errors[url]}")
+                else:
+                    enabled = item.data(Qt.ItemDataRole.UserRole + 1)
+                    color = QColor(0, 180, 0) if enabled else QColor(150, 150, 150)
+                    item.setForeground(color)
+                    item.setToolTip("")
+                break
 
     def set_last_poll_time(self, time_str: str) -> None:
         """Update the last poll time display.

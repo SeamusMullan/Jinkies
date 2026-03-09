@@ -59,6 +59,96 @@ class TestDashboard:
         dashboard.record_error()
         assert dashboard._errors_today == 2
 
+    def test_mark_feed_error_colours_feed_item(self, qtbot):
+        """mark_feed_error should turn the matching feed list item red."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.update_feed_names_mapping(feeds)
+
+        dashboard.mark_feed_error("https://a.com/feed", "connection refused")
+
+        item = dashboard._feed_list.item(0)
+        assert item is not None
+        # Colour should be red-ish (r > g)
+        colour = item.foreground().color()
+        assert colour.red() > colour.green()
+        assert item.toolTip() == "Error: connection refused"
+        assert dashboard._feed_errors["https://a.com/feed"] == "connection refused"
+
+    def test_mark_feed_error_shows_status_bar_message(self, qtbot):
+        """mark_feed_error should post a transient message to the status bar."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.update_feed_names_mapping(feeds)
+
+        dashboard.mark_feed_error("https://a.com/feed", "timeout")
+
+        assert "timeout" in dashboard._statusbar.currentMessage()
+
+    def test_clear_feed_error_restores_feed_item(self, qtbot):
+        """clear_feed_error should restore the feed item to green."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.update_feed_names_mapping(feeds)
+
+        dashboard.mark_feed_error("https://a.com/feed", "oops")
+        dashboard.clear_feed_error("https://a.com/feed")
+
+        item = dashboard._feed_list.item(0)
+        assert item is not None
+        colour = item.foreground().color()
+        assert colour.green() > colour.red()
+        assert item.toolTip() == ""
+        assert "https://a.com/feed" not in dashboard._feed_errors
+
+    def test_clear_feed_error_noop_when_no_error(self, qtbot):
+        """clear_feed_error should be a no-op when there is no stored error."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        # Should not raise even if URL was never in error
+        dashboard.clear_feed_error("https://unknown.com/feed")
+
+    def test_update_feeds_preserves_error_colour(self, qtbot):
+        """update_feeds should keep errored items red when rebuilding the list."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.update_feed_names_mapping(feeds)
+        dashboard.mark_feed_error("https://a.com/feed", "server down")
+
+        # Rebuild the feed list (e.g. after config change)
+        dashboard.update_feeds(feeds)
+
+        item = dashboard._feed_list.item(0)
+        assert item is not None
+        colour = item.foreground().color()
+        assert colour.red() > colour.green()
+        assert item.toolTip() == "Error: server down"
+
+    def test_clear_feed_error_restores_disabled_feed_to_gray(self, qtbot):
+        """clear_feed_error on a disabled feed should restore it to gray, not green."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A", enabled=False)]
+        dashboard.update_feeds(feeds)
+        dashboard.update_feed_names_mapping(feeds)
+
+        dashboard.mark_feed_error("https://a.com/feed", "oops")
+        dashboard.clear_feed_error("https://a.com/feed")
+
+        item = dashboard._feed_list.item(0)
+        assert item is not None
+        colour = item.foreground().color()
+        # Disabled feed should be gray (r ≈ g ≈ b ≈ 150), not green
+        assert colour.green() < 200  # Not bright green
+
     def test_set_last_poll_time(self, qtbot):
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)

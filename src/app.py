@@ -249,6 +249,7 @@ class JinkiesApp:
         # error state so that a future error will notify again.
         for entry in entries:
             self._errored_feeds.discard(entry.feed_url)
+            self.dashboard.clear_feed_error(entry.feed_url)
 
         self.dashboard.add_entries(entries)
         self.audio.play("new_entry")
@@ -281,6 +282,7 @@ class JinkiesApp:
             error: The error message.
         """
         self.dashboard.record_error()
+        self.dashboard.mark_feed_error(url, error)
         if url not in self._errored_feeds:
             self._errored_feeds.add(url)
             self.audio.play("error")
