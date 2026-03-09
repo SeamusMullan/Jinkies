@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import base64
 import datetime
+import hashlib
 import http.client
 import logging
 import time
 import urllib.error
 import urllib.request
+import uuid
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
@@ -106,8 +108,8 @@ class FeedPoller(QThread):
 
             new_entries = []
             for entry in parsed.entries:
-                entry_id = entry.get("id", entry.get("link", ""))
-                if not entry_id or entry_id in self.seen_ids:
+                entry_id = self._get_entry_id(entry)
+                if entry_id in self.seen_ids:
                     continue
 
                 self.seen_ids.add(entry_id)
@@ -133,6 +135,35 @@ class FeedPoller(QThread):
         except Exception:
             logger.exception("Unexpected error polling feed %s", feed.url)
             raise
+
+    def _get_entry_id(self, entry: object) -> str:
+        """Return a stable unique ID for a feed entry.
+
+        Tries the entry's ``id`` field, then ``link``.  If neither is
+        present, computes a SHA-256 hash of the concatenated title,
+        summary and published/updated fields so that structurally
+        identical entries still map to the same key across restarts.
+        If none of those content fields exist either, a UUID is used as
+        a last resort (the entry will re-notify after a restart).
+
+        Args:
+            entry: A feedparser entry mapping.
+
+        Returns:
+            A non-empty string that uniquely identifies the entry.
+        """
+        entry_id = entry.get("id", "") or entry.get("link", "")
+        if entry_id:
+            return entry_id
+
+        title = entry.get("title", "")
+        summary = entry.get("summary", "")
+        published = entry.get("published", entry.get("updated", ""))
+        content = f"{title}|{summary}|{published}"
+        if any([title, summary, published]):
+            return hashlib.sha256(content.encode()).hexdigest()
+
+        return str(uuid.uuid4())
 
     def _fetch_feed(self, feed: Feed) -> feedparser.FeedParserDict:
         """Fetch and parse a feed, handling authentication if configured.

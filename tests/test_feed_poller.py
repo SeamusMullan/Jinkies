@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -236,3 +237,103 @@ class TestFeedPollerAuth:
         _, kwargs = mock_parse.call_args
         assert "socket_timeout" in kwargs, "feedparser.parse must be called with socket_timeout"
         assert kwargs["socket_timeout"] > 0
+
+
+def _make_entry(data: dict) -> MagicMock:
+    """Helper: create a mock feedparser entry whose .get() mirrors *data*."""
+    entry = MagicMock()
+    entry.get = lambda key, default="": data.get(key, default)
+    return entry
+
+
+class TestGetEntryId:
+    """Unit tests for FeedPoller._get_entry_id fallback logic."""
+
+    def setup_method(self):
+        feed = Feed(url="https://example.com/feed.atom", name="Test")
+        self.poller = FeedPoller(feeds=[feed])
+
+    def test_uses_id_field_when_present(self):
+        entry = _make_entry({"id": "urn:uuid:abc123", "link": "https://x.com/1"})
+        assert self.poller._get_entry_id(entry) == "urn:uuid:abc123"
+
+    def test_falls_back_to_link_when_no_id(self):
+        entry = _make_entry({"link": "https://x.com/1"})
+        assert self.poller._get_entry_id(entry) == "https://x.com/1"
+
+    def test_hash_fallback_uses_title_summary_published(self):
+        entry = _make_entry({"title": "Hello", "summary": "World", "published": "2024-01-01"})
+        expected = hashlib.sha256(b"Hello|World|2024-01-01").hexdigest()
+        assert self.poller._get_entry_id(entry) == expected
+
+    def test_hash_fallback_updated_used_when_published_missing(self):
+        entry = _make_entry({"title": "T", "updated": "2024-06-01"})
+        expected = hashlib.sha256(b"T||2024-06-01").hexdigest()
+        assert self.poller._get_entry_id(entry) == expected
+
+    def test_hash_fallback_is_stable(self):
+        """Same content must always produce the same ID."""
+        entry1 = _make_entry({"title": "A", "summary": "B", "published": "2024-01-01"})
+        entry2 = _make_entry({"title": "A", "summary": "B", "published": "2024-01-01"})
+        assert self.poller._get_entry_id(entry1) == self.poller._get_entry_id(entry2)
+
+    def test_different_content_produces_different_hashes(self):
+        entry1 = _make_entry({"title": "Entry One"})
+        entry2 = _make_entry({"title": "Entry Two"})
+        assert self.poller._get_entry_id(entry1) != self.poller._get_entry_id(entry2)
+
+    def test_uuid_fallback_for_completely_empty_entry(self):
+        """Entries with no usable fields get a UUID (non-empty, non-colliding)."""
+        entry1 = _make_entry({})
+        entry2 = _make_entry({})
+        id1 = self.poller._get_entry_id(entry1)
+        id2 = self.poller._get_entry_id(entry2)
+        assert id1  # non-empty
+        assert id2  # non-empty
+        # Two separate calls must not collide
+        assert id1 != id2
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_no_id_link_entries_each_get_unique_id(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        """Entries without id/link must not collide with each other."""
+        entry1 = _make_entry({"title": "Alpha", "summary": "First", "published": "2024-01-01"})
+        entry2 = _make_entry({"title": "Beta", "summary": "Second", "published": "2024-01-02"})
+
+        result = MagicMock()
+        result.bozo = False
+        result.entries = [entry1, entry2]
+        mock_parse.return_value = result
+
+        poller = FeedPoller(feeds=[sample_feed])
+        entries = []
+        poller.new_entries_found.connect(entries.extend)
+        poller._poll_feed(sample_feed)
+
+        assert len(entries) == 2
+        assert entries[0].entry_id != entries[1].entry_id
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_no_id_link_entry_not_re_emitted_on_second_poll(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        """An entry seen on the first poll must not re-appear on the second poll."""
+        entry = _make_entry({"title": "Stable", "summary": "Content", "published": "2024-01-01"})
+
+        result = MagicMock()
+        result.bozo = False
+        result.entries = [entry]
+        mock_parse.return_value = result
+
+        poller = FeedPoller(feeds=[sample_feed])
+        entries = []
+        poller.new_entries_found.connect(entries.extend)
+
+        poller._poll_feed(sample_feed)
+        assert len(entries) == 1
+
+        poller._poll_feed(sample_feed)
+        assert len(entries) == 1  # still 1 — not re-emitted
