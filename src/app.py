@@ -9,6 +9,12 @@ from __future__ import annotations
 import datetime
 import sys
 from pathlib import Path
+from typing import IO
+
+if sys.platform == "win32":
+    import msvcrt  # type: ignore[import-not-found]
+else:
+    import fcntl
 
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
@@ -46,43 +52,72 @@ def _get_icon_path() -> str:
     return ""
 
 
+# Module-level handle kept open for the lifetime of the process so the OS-level
+# lock remains held.  The OS automatically releases it on exit (clean or crash),
+# which eliminates the TOCTOU race present in the old PID-file approach.
+_lock_fh: IO[str] | None = None
+
+
 def _try_lock(config_dir: Path) -> bool:
-    """Attempt to create an advisory lock file for single-instance check.
+    """Attempt to acquire an exclusive OS-level lock for single-instance enforcement.
+
+    Uses ``fcntl.flock`` on POSIX or ``msvcrt.locking`` on Windows.  The lock is
+    held for the lifetime of the process and is automatically released on exit,
+    whether clean or due to a crash, eliminating the TOCTOU window in the old
+    PID-file approach.
 
     Args:
         config_dir: The config directory to place the lock file.
 
     Returns:
-        True if lock was acquired (no other instance running).
+        True if the lock was acquired (no other instance is running).
     """
+    global _lock_fh  # noqa: PLW0603
+
     lock_path = config_dir / ".lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if lock_path.exists():
-        # Check if the PID in the lock file is still running
-        try:
-            pid = int(lock_path.read_text().strip())
-            # Check if process exists
-            import os
+    try:
+        fh: IO[str] = lock_path.open("w")
+    except OSError:
+        return False
 
-            os.kill(pid, 0)
-            return False  # noqa: TRY300
-        except (ValueError, ProcessLookupError, PermissionError, OSError):
-            pass  # Stale lock file
+    try:
+        if sys.platform == "win32":
+            # msvcrt.locking requires at least one byte to exist in the file.
+            # Write a space, flush it to disk, then seek back before locking.
+            fh.write(" ")
+            fh.flush()
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return False
 
-    import os
-
-    lock_path.write_text(str(os.getpid()))
+    _lock_fh = fh  # Keep open; closing would release the lock
     return True
 
 
 def _release_lock(config_dir: Path) -> None:
-    """Remove the advisory lock file.
+    """Release the OS-level advisory lock and remove the lock file.
 
     Args:
         config_dir: The config directory containing the lock file.
     """
+    global _lock_fh  # noqa: PLW0603
+
     lock_path = config_dir / ".lock"
+    if _lock_fh is not None:
+        try:
+            if sys.platform == "win32":
+                _lock_fh.seek(0)
+                msvcrt.locking(_lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
+            _lock_fh.close()
+        except OSError:
+            pass
+        _lock_fh = None
     lock_path.unlink(missing_ok=True)
 
 
