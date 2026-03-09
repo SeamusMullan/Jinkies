@@ -65,6 +65,9 @@ class TestFeedErrorRateLimiting:
         audio.play.assert_called_once_with("error")
         notifier.notify.assert_called_once()
         dashboard.record_error.assert_called_once()
+        dashboard.mark_feed_error.assert_called_once_with(
+            "https://example.com/feed", "connection refused"
+        )
 
     def test_second_error_silent(self, qtbot):
         app, audio, notifier, dashboard = _make_app()
@@ -73,13 +76,17 @@ class TestFeedErrorRateLimiting:
         audio.play.reset_mock()
         notifier.notify.reset_mock()
         dashboard.record_error.reset_mock()
+        dashboard.mark_feed_error.reset_mock()
 
         app._on_feed_error("https://example.com/feed", "still down")
 
         audio.play.assert_not_called()
         notifier.notify.assert_not_called()
-        # Dashboard counter should still be incremented every time
+        # Dashboard counter and error marking should still be updated every time
         dashboard.record_error.assert_called_once()
+        dashboard.mark_feed_error.assert_called_once_with(
+            "https://example.com/feed", "still down"
+        )
 
     def test_different_feeds_each_notify_once(self, qtbot):
         app, audio, notifier, dashboard = _make_app()
@@ -108,6 +115,8 @@ class TestFeedErrorRateLimiting:
             seen=False,
         )
         app._on_new_entries([entry])
+
+        dashboard.clear_feed_error.assert_called_once_with("https://example.com/feed")
 
         # Feed breaks again — should notify again
         audio.play.reset_mock()
