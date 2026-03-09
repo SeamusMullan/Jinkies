@@ -78,7 +78,7 @@ class TestFeedPoller:
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
     def test_poll_feed_does_not_mutate_last_poll_time(
-        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result,
     ):
         mock_parse.return_value = mock_feedparser_result
         poller = FeedPoller(feeds=[sample_feed])
