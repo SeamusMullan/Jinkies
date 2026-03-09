@@ -429,10 +429,3 @@ class Dashboard(QMainWindow):
         self.reset_daily_stats()
         self._schedule_daily_reset()
 
-    def get_last_poll_display(self) -> str:
-        """Format the current time for display as last poll time.
-
-        Returns:
-            Formatted time string.
-        """
-        return datetime.datetime.now(tz=datetime.UTC).strftime("%H:%M:%S UTC")
