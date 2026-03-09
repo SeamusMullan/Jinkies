@@ -6,10 +6,12 @@ local Atom/XML feed files.
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
 from pathlib import Path
+from xml.etree.ElementTree import Element
 
+import defusedxml.ElementTree as ET  # noqa: N817
 import feedparser
+from defusedxml import DefusedXmlException
 
 from src.models import Feed
 from src.url_validation import validate_feed_url
@@ -29,8 +31,8 @@ def import_opml(path: str | Path) -> list[Feed]:
     """
     path = Path(path)
     try:
-        tree = ET.parse(path)  # noqa: S314
-    except ET.ParseError as e:
+        tree = ET.parse(path)
+    except (ET.ParseError, DefusedXmlException) as e:
         msg = f"Invalid OPML file: {e}"
         raise ValueError(msg) from e
 
@@ -40,7 +42,7 @@ def import_opml(path: str | Path) -> list[Feed]:
     return feeds
 
 
-def _collect_opml_outlines(element: ET.Element, feeds: list[Feed]) -> None:
+def _collect_opml_outlines(element: Element, feeds: list[Feed]) -> None:
     """Recursively collect feed outlines from an OPML element tree.
 
     Args:

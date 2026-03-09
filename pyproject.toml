@@ -5,6 +5,7 @@ description = "Cross-platform Atom feed monitor with audio cues and desktop noti
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "defusedxml>=0.7.1",
     "feedparser>=6.0.12",
     "keyring>=25.0.0",
     "pyside6>=6.10.2",

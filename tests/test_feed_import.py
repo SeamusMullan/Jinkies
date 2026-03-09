@@ -86,6 +86,16 @@ class TestImportOpml:
         with pytest.raises(ValueError, match="Invalid OPML"):
             import_opml(bad_file)
 
+    def test_xxe_payload_is_rejected(self, tmp_path):
+        xxe_file = tmp_path / "xxe.opml"
+        xxe_file.write_text("""\
+<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///nonexistent">]>
+<opml><body><outline xmlUrl="https://a.com/feed" text="&xxe;"/></body></opml>
+""")
+        with pytest.raises(ValueError, match="Invalid OPML"):
+            import_opml(xxe_file)
+
     def test_empty_opml(self, tmp_path):
         opml_file = tmp_path / "empty.opml"
         opml_file.write_text(
