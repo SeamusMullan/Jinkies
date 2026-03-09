@@ -33,10 +33,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.credential_store import delete_credentials, get_credentials, store_credentials
+from src.feed_import import import_local_feed, import_opml
+from src.models import Feed
 from src.url_validation import check_feed_connectivity, validate_feed_url
 
 if TYPE_CHECKING:
-    from src.models import AppConfig, Feed
+    from src.models import AppConfig
 
 
 class SettingsDialog(QDialog):
@@ -176,8 +178,6 @@ class SettingsDialog(QDialog):
         """Show a dialog to add a new feed."""
         dialog = FeedEditDialog(parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            from src.models import Feed
-
             url = dialog.url_edit.text()
             username = dialog.auth_user_edit.text() or None
             token = dialog.auth_token_edit.text() or None
@@ -249,8 +249,6 @@ class SettingsDialog(QDialog):
         )
         if not path:
             return
-
-        from src.feed_import import import_local_feed, import_opml
 
         try:
             if path.lower().endswith(".opml"):
