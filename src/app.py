@@ -354,26 +354,38 @@ class JinkiesApp:
         self.config.feeds.extend(added)
         self._apply_config_changes()
 
-    def _on_remove_feed(self, index: int) -> None:
-        """Remove the feed at *index* from the config and refresh all components.
+    def _on_remove_feed(self, indices: list[int]) -> None:
+        """Remove the feeds at *indices* from the config and refresh all components.
 
         Args:
-            index: Zero-based position of the feed to remove, as emitted by
+            indices: Zero-based positions of the feeds to remove, as emitted by
                 :attr:`Dashboard.remove_feed_requested`.
         """
-        if 0 <= index < len(self.config.feeds):
-            feed = self.config.feeds[index]
-            reply = QMessageBox.question(
-                self.dashboard,
-                "Remove Feed",
-                f"Remove feed \"{feed.name}\"?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            self.config.feeds.pop(index)
-            self._apply_config_changes()
+        valid = [i for i in indices if 0 <= i < len(self.config.feeds)]
+        if not valid:
+            return
+
+        if len(valid) == 1:
+            feed = self.config.feeds[valid[0]]
+            title = "Remove Feed"
+            msg = f"Remove feed \"{feed.name}\"?"
+        else:
+            names = "\n".join(f"  \u2022 {self.config.feeds[i].name}" for i in valid)
+            title = "Remove Feeds"
+            msg = f"Remove {len(valid)} feeds?\n\n{names}"
+
+        reply = QMessageBox.question(
+            self.dashboard,
+            title,
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for i in sorted(valid, reverse=True):
+            self.config.feeds.pop(i)
+        self._apply_config_changes()
 
     def _on_settings(self) -> None:
         """Show the settings dialog."""

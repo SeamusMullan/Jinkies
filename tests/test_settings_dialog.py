@@ -105,6 +105,22 @@ class TestSettingsDialogRemoveFeed:
         dialog._load_values()
         return dialog, feed
 
+    def _make_dialog_multi(self, qtbot):
+        feeds = [
+            Feed(url="https://a.com/feed.atom", name="Feed A"),
+            Feed(url="https://b.com/feed.atom", name="Feed B"),
+            Feed(url="https://c.com/feed.atom", name="Feed C"),
+        ]
+        config = AppConfig(
+            poll_interval_secs=60,
+            feeds=feeds,
+            sound_map={},
+        )
+        dialog = SettingsDialog(config)
+        qtbot.addWidget(dialog)
+        dialog._load_values()
+        return dialog, feeds
+
     def test_remove_feed_confirmed(self, qtbot):
         """Confirming removal deletes the feed from the list and clears credentials."""
         dialog, feed = self._make_dialog(qtbot)
@@ -128,3 +144,43 @@ class TestSettingsDialogRemoveFeed:
             dialog._remove_feed()
 
         assert dialog._feed_list.count() == 1
+
+    def test_remove_multiple_feeds_confirmed(self, qtbot):
+        """Confirming bulk removal deletes all selected feeds and their credentials."""
+        from PySide6.QtCore import Qt as _Qt
+        dialog, feeds = self._make_dialog_multi(qtbot)
+        # Select feeds at row 0 and row 2
+        dialog._feed_list.item(0).setSelected(True)
+        dialog._feed_list.item(2).setSelected(True)
+
+        with patch("src.settings_dialog.QMessageBox.question",
+                   return_value=QMessageBox.StandardButton.Yes) as mock_question, \
+             patch("src.settings_dialog.delete_credentials") as mock_delete:
+            dialog._remove_feed()
+
+        # Only the two selected feeds should remain removed; one stays
+        assert dialog._feed_list.count() == 1
+        # Remaining item should be Feed B (row 1)
+        remaining = dialog._feed_list.item(0).data(_Qt.ItemDataRole.UserRole)
+        assert remaining.name == "Feed B"
+        # Credentials must be cleared for both removed feeds
+        assert mock_delete.call_count == 2
+        deleted_urls = {call.args[0] for call in mock_delete.call_args_list}
+        assert deleted_urls == {feeds[0].url, feeds[2].url}
+        # The confirmation dialog should mention bulk removal
+        title_arg = mock_question.call_args[0][1]
+        msg_arg = mock_question.call_args[0][2]
+        assert title_arg == "Remove Feeds"
+        assert "2" in msg_arg
+
+    def test_remove_multiple_feeds_cancelled(self, qtbot):
+        """Cancelling bulk removal keeps all feeds in the list."""
+        dialog, feeds = self._make_dialog_multi(qtbot)
+        dialog._feed_list.item(0).setSelected(True)
+        dialog._feed_list.item(2).setSelected(True)
+
+        with patch("src.settings_dialog.QMessageBox.question",
+                   return_value=QMessageBox.StandardButton.No):
+            dialog._remove_feed()
+
+        assert dialog._feed_list.count() == 3
