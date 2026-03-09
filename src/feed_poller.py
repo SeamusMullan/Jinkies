@@ -9,7 +9,10 @@ from __future__ import annotations
 import base64
 import datetime
 import hashlib
+import http.client
+import logging
 import time
+import urllib.error
 import urllib.request
 import uuid
 from threading import Event, Lock
@@ -24,6 +27,8 @@ from src.url_validation import validate_feed_url
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class FeedPoller(QThread):
@@ -125,8 +130,11 @@ class FeedPoller(QThread):
             if new_entries:
                 self.new_entries_found.emit(new_entries)
 
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as e:
             self.feed_error.emit(feed.url, str(e))
+        except Exception:
+            logger.exception("Unexpected error polling feed %s", feed.url)
+            raise
 
     def _get_entry_id(self, entry: object) -> str:
         """Return a stable unique ID for a feed entry.

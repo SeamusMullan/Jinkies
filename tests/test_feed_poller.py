@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.feed_poller import FeedPoller
 from src.models import Feed
 
@@ -75,7 +77,7 @@ class TestFeedPoller:
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
     def test_poll_feed_error(self, mock_parse, _mock_creds, sample_feed, qtbot):
-        mock_parse.side_effect = Exception("Network error")
+        mock_parse.side_effect = OSError("Network error")
         poller = FeedPoller(feeds=[sample_feed])
 
         errors = []
@@ -85,6 +87,17 @@ class TestFeedPoller:
         assert len(errors) == 1
         assert errors[0][0] == sample_feed.url
         assert "Network error" in errors[0][1]
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_poll_feed_unexpected_exception_reraises(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        mock_parse.side_effect = RuntimeError("Unexpected failure")
+        poller = FeedPoller(feeds=[sample_feed])
+
+        with pytest.raises(RuntimeError, match="Unexpected failure"):
+            poller._poll_feed(sample_feed)
 
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")

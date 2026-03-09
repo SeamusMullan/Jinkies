@@ -86,6 +86,16 @@ class TestImportOpml:
         with pytest.raises(ValueError, match="Invalid OPML"):
             import_opml(bad_file)
 
+    def test_xxe_payload_is_rejected(self, tmp_path):
+        xxe_file = tmp_path / "xxe.opml"
+        xxe_file.write_text("""\
+<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///nonexistent">]>
+<opml><body><outline xmlUrl="https://a.com/feed" text="&xxe;"/></body></opml>
+""")
+        with pytest.raises(ValueError, match="Invalid OPML"):
+            import_opml(xxe_file)
+
     def test_empty_opml(self, tmp_path):
         opml_file = tmp_path / "empty.opml"
         opml_file.write_text(
@@ -107,6 +117,45 @@ class TestImportOpml:
 """)
         feeds = import_opml(opml_file)
         assert feeds[0].name == "Text Name"
+
+    @pytest.mark.parametrize("bad_url", [
+        "file:///etc/passwd",
+        "file:///home/user/.ssh/id_rsa",
+        "ftp://example.com/feed.xml",
+        "data:text/xml,feed",
+        "javascript:alert(1)",
+    ])
+    def test_rejects_non_http_scheme(self, tmp_path, bad_url):
+        opml_file = tmp_path / "bad_scheme.opml"
+        opml_file.write_text(f"""\
+<?xml version="1.0"?>
+<opml version="2.0">
+  <body>
+    <outline type="rss" text="Bad Feed" xmlUrl="{bad_url}"/>
+  </body>
+</opml>
+""")
+        feeds = import_opml(opml_file)
+        assert feeds == []
+
+    def test_filters_invalid_schemes_from_mixed_opml(self, tmp_path):
+        opml_file = tmp_path / "mixed.opml"
+        opml_file.write_text("""\
+<?xml version="1.0"?>
+<opml version="2.0">
+  <body>
+    <outline type="rss" text="Valid Feed"
+             xmlUrl="https://example.com/feed"/>
+    <outline type="rss" text="Local File"
+             xmlUrl="file:///etc/passwd"/>
+    <outline type="rss" text="FTP Feed"
+             xmlUrl="ftp://example.com/feed.xml"/>
+  </body>
+</opml>
+""")
+        feeds = import_opml(opml_file)
+        assert len(feeds) == 1
+        assert feeds[0].url == "https://example.com/feed"
 
 
 class TestImportLocalFeed:
