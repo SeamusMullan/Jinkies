@@ -67,7 +67,7 @@ def _read_json(path: Path) -> dict[str, Any]:
             x = json.load(f)
             return x
         except json.JSONDecodeError as e:
-            print(f"Error loading json file {f} with error: {e}")
+            logger.warning("Corrupted JSON file %s: %s — returning defaults", path, e)
             return {}
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from unittest.mock import patch
 
 from src.config import load_config, load_state, save_config, save_state
@@ -10,6 +11,15 @@ from src.models import AppConfig
 
 
 class TestConfig:
+    def test_corrupted_config_json_returns_defaults(self, tmp_config_dir, caplog):
+        """Corrupted config.json should log a warning and return default AppConfig."""
+        (tmp_config_dir / "config.json").write_text("{not valid json!!!", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="src.config"):
+            config = load_config(tmp_config_dir)
+        assert isinstance(config, AppConfig)
+        assert config.feeds == []
+        assert any("Corrupted" in m for m in caplog.messages)
+
     def test_load_config_missing_file(self, tmp_config_dir):
         config = load_config(tmp_config_dir)
         assert isinstance(config, AppConfig)
@@ -128,6 +138,15 @@ class TestCredentialMigration:
 
 
 class TestState:
+    def test_corrupted_state_json_returns_defaults(self, tmp_config_dir, caplog):
+        """Corrupted state.json should log a warning and return state with empty seen_ids."""
+        (tmp_config_dir / "state.json").write_text("{not valid json!!!", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="src.config"):
+            state = load_state(tmp_config_dir)
+        assert "seen_ids" in state
+        assert state["seen_ids"] == []
+        assert any("Corrupted" in m for m in caplog.messages)
+
     def test_load_state_missing_file(self, tmp_config_dir):
         state = load_state(tmp_config_dir)
         assert "seen_ids" in state
