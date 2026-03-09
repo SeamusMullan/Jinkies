@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import base64
 import datetime
+import http.client
+import logging
 import time
+import urllib.error
 import urllib.request
 from threading import Event, Lock
 from typing import TYPE_CHECKING
@@ -22,6 +25,8 @@ from src.url_validation import validate_feed_url
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class FeedPoller(QThread):
@@ -123,8 +128,11 @@ class FeedPoller(QThread):
             if new_entries:
                 self.new_entries_found.emit(new_entries)
 
-        except Exception as e:  # noqa: BLE001
+        except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as e:
             self.feed_error.emit(feed.url, str(e))
+        except Exception:
+            logger.exception("Unexpected error polling feed %s", feed.url)
+            raise
 
     def _fetch_feed(self, feed: Feed) -> feedparser.FeedParserDict:
         """Fetch and parse a feed, handling authentication if configured.
