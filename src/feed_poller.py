@@ -125,6 +125,7 @@ class FeedPoller(QThread):
                         published=published,
                         entry_id=entry_id,
                         seen=False,
+                        summary=entry.get("summary", ""),
                     )
                 )
 
