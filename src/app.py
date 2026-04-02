@@ -37,15 +37,26 @@ from src.settings_dialog import FeedEditDialog, ImportPreviewDialog, SettingsDia
 
 
 def _get_icon_path() -> str:
-    """Get the path to the application icon.
+    """Get the path to the application icon, using the platform-appropriate format.
+
+    On Windows the system tray requires a ``.ico`` file for correct display;
+    if one is present it is preferred over the generic PNG.  On all other
+    platforms the PNG is used directly.
 
     Returns:
-        Path to the icon file.
+        Absolute path to the icon file, or an empty string if no icon is found.
     """
     if getattr(sys, "frozen", False):
         base = Path(sys._MEIPASS)  # noqa: SLF001
     else:
         base = Path(__file__).resolve().parent.parent
+
+    # Windows system tray renders .ico files more reliably than .png.
+    if sys.platform == "win32":
+        ico_path = base / "assets" / "icon.ico"
+        if ico_path.exists():
+            return str(ico_path)
+
     icon_path = base / "assets" / "icon.png"
     if icon_path.exists():
         return str(icon_path)
@@ -152,7 +163,7 @@ class JinkiesApp:
         # Ensure default sounds exist
         ensure_default_sounds()
 
-        # Set up system tray
+        # Set up system tray (guard against environments without a tray)
         self._tray = QSystemTrayIcon()
         if icon_path:
             self._tray.setIcon(QIcon(icon_path))
@@ -162,7 +173,27 @@ class JinkiesApp:
             ))
         self._tray.setToolTip("Jinkies — Feed Monitor")
         self._setup_tray_menu()
-        self._tray.show()
+
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray.show()
+            # On Windows, show a brief balloon on first launch so users know
+            # they can click the tray icon to reopen the window.  The flag is
+            # persisted in state.json so it is only shown once.
+            if sys.platform == "win32" and not self._state.get("tray_tip_shown"):
+                self._state["tray_tip_shown"] = True
+                self._save_state()
+                self._tray.showMessage(
+                    "Jinkies",
+                    "Jinkies is running in the system tray. "
+                    "Click the icon to show or hide the window.",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    4000,
+                )
+        else:
+            # Tray unavailable – ensure the window stays open so the app
+            # remains accessible.
+            self.app.setQuitOnLastWindowClosed(True)
+
         self._tray.activated.connect(self._on_tray_activated)
 
         # Set up components
