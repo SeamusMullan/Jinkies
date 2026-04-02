@@ -155,6 +155,10 @@ class AppConfig:
         notification_style: Either "native" or "custom".
         max_entries: Maximum number of feed entries to keep in memory and on
             disk.  Oldest entries are evicted when the limit is exceeded.
+        seen_ids_max_age_days: Number of days to retain seen entry IDs.
+            IDs older than this are pruned from state on load and save,
+            preventing ``state.json`` from growing unboundedly over time.
+            Defaults to 30 days.
     """
 
     poll_interval_secs: int = 60
@@ -165,6 +169,7 @@ class AppConfig:
     })
     notification_style: str = "native"
     max_entries: int = 10_000
+    seen_ids_max_age_days: int = 30
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
