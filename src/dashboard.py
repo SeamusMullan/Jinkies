@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QTableWidget,
@@ -51,6 +52,8 @@ class Dashboard(QMainWindow):
         entries: List of currently displayed FeedEntry objects.
         max_entries: Maximum number of entries to keep; oldest are evicted when
             this limit is exceeded.
+        page_size: Number of entries shown per page.  Navigation controls are
+            visible whenever the filtered entry count exceeds this value.
     """
 
     add_feed_requested = Signal()
@@ -67,6 +70,11 @@ class Dashboard(QMainWindow):
         self.setMinimumSize(800, 500)
         self.entries: list[FeedEntry] = []
         self.max_entries: int = 10_000
+        #: Number of entries rendered per page; navigation controls appear when
+        #: the filtered entry count exceeds this value.
+        self.page_size: int = 100
+        #: Current (0-indexed) page number for the entry table.
+        self._current_page: int = 0
 
         # Create store at default location if it doesnt exist
         self._entries_store_location = get_config_dir() / "store.json"
@@ -212,6 +220,26 @@ class Dashboard(QMainWindow):
         splitter.setSizes([200, 600])
         layout.addWidget(splitter)
 
+        # Pagination controls (hidden until entries exceed page_size)
+        self._pagination_widget = QWidget()
+        pagination_layout = QHBoxLayout(self._pagination_widget)
+        pagination_layout.setContentsMargins(0, 2, 0, 2)
+
+        self._prev_page_btn = QPushButton("← Prev")
+        self._prev_page_btn.clicked.connect(self._go_prev_page)
+        pagination_layout.addWidget(self._prev_page_btn)
+
+        self._page_label = QLabel("Page 1 of 1")
+        pagination_layout.addWidget(self._page_label)
+
+        self._next_page_btn = QPushButton("Next →")
+        self._next_page_btn.clicked.connect(self._go_next_page)
+        pagination_layout.addWidget(self._next_page_btn)
+
+        pagination_layout.addStretch()
+        self._pagination_widget.setVisible(False)
+        layout.addWidget(self._pagination_widget)
+
     def _setup_statusbar(self) -> None:
         """Create the status bar with stats display."""
         self._statusbar = QStatusBar()
@@ -261,7 +289,13 @@ class Dashboard(QMainWindow):
         self._save_entries_store()
 
     def _refresh_table(self) -> None:
-        """Rebuild the entry table from current entries and filter."""
+        """Rebuild the entry table from current entries, filter, and current page.
+
+        Entries are displayed newest-first.  Only the slice for
+        :attr:`_current_page` is rendered; the pagination controls are shown
+        or hidden depending on whether the total number of filtered entries
+        exceeds :attr:`page_size`.
+        """
         current_filter = self._filter_combo.currentText()
         filtered = self.entries
         if current_filter != "All Feeds":
@@ -270,9 +304,22 @@ class Dashboard(QMainWindow):
                 if self._feed_name_for(e.feed_url) == current_filter
             ]
 
+        reversed_filtered = list(reversed(filtered))
+        total = len(reversed_filtered)
+
+        # Clamp _current_page so it is never out of bounds after filter changes.
+        total_pages = max(1, (total + self.page_size - 1) // self.page_size)
+        if self._current_page >= total_pages:
+            self._current_page = total_pages - 1
+
+        # Slice entries for the current page.
+        start = self._current_page * self.page_size
+        end = start + self.page_size
+        page_entries = reversed_filtered[start:end]
+
         self._entry_table.setSortingEnabled(False)
-        self._entry_table.setRowCount(len(filtered))
-        for row, entry in enumerate(reversed(filtered)):
+        self._entry_table.setRowCount(len(page_entries))
+        for row, entry in enumerate(page_entries):
             self._entry_table.setItem(row, 0, QTableWidgetItem(entry.title))
             self._entry_table.setItem(
                 row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
@@ -281,6 +328,14 @@ class Dashboard(QMainWindow):
             status = "Seen" if entry.seen else "New"
             self._entry_table.setItem(row, 3, QTableWidgetItem(status))
         self._entry_table.setSortingEnabled(True)
+
+        # Update pagination controls.
+        needs_pagination = total > self.page_size
+        self._pagination_widget.setVisible(needs_pagination)
+        if needs_pagination:
+            self._page_label.setText(f"Page {self._current_page + 1} of {total_pages}")
+            self._prev_page_btn.setEnabled(self._current_page > 0)
+            self._next_page_btn.setEnabled(self._current_page < total_pages - 1)
 
     def _feed_name_for(self, url: str) -> str:
         """Look up a feed's display name by URL.
