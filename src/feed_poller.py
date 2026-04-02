@@ -72,6 +72,7 @@ class FeedPoller(QThread):
         self.seen_ids: set[str] = seen_ids or set()
         self._pause_event = Event()
         self._pause_event.set()  # Start unpaused
+        self._wakeup_event = Event()  # Set by update_interval() to abort sleep early
 
     def run(self) -> None:
         """Execute the polling loop.
@@ -223,15 +224,28 @@ class FeedPoller(QThread):
         return feedparser.parse(feed.url, socket_timeout=30)
 
     def _interruptible_sleep(self, seconds: int) -> None:
-        """Sleep in small increments to allow quick shutdown.
+        """Sleep for *seconds*, waking early on shutdown or interval change.
+
+        Checks :py:meth:`isInterruptionRequested` at most every 0.1 s so
+        that a clean shutdown is never delayed more than one tick.
+        Additionally, the sleep returns immediately when ``_wakeup_event``
+        is set — which :py:meth:`update_interval` does — so a new poll
+        interval takes effect without waiting for the full old interval to
+        expire.
 
         Args:
             seconds: Total seconds to sleep.
         """
-        for _ in range(seconds * 10):
-            if self.isInterruptionRequested():
+        deadline = time.monotonic() + seconds
+        while not self.isInterruptionRequested():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 return
-            time.sleep(0.1)
+            # Block for at most 0.1 s so interruption is detected quickly.
+            # Returns True early when _wakeup_event is set (interval changed).
+            if self._wakeup_event.wait(timeout=min(remaining, 0.1)):
+                self._wakeup_event.clear()
+                return
 
     def pause(self) -> None:
         """Pause the polling loop."""
@@ -260,9 +274,14 @@ class FeedPoller(QThread):
             self.feeds = feeds
 
     def update_interval(self, interval: int) -> None:
-        """Update the polling interval.
+        """Update the polling interval and interrupt any in-progress sleep.
+
+        Sets ``_wakeup_event`` so that :py:meth:`_interruptible_sleep`
+        returns immediately, allowing the new interval to take effect from
+        the very next poll cycle rather than after the old interval expires.
 
         Args:
             interval: New interval in seconds.
         """
         self.poll_interval = interval
+        self._wakeup_event.set()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,6 +44,32 @@ class TestFeedPoller:
         poller = FeedPoller(feeds=[sample_feed], poll_interval=60)
         poller.update_interval(120)
         assert poller.poll_interval == 120
+
+    def test_update_interval_interrupts_sleep(self, sample_feed):
+        """update_interval() must wake _interruptible_sleep immediately.
+
+        Starts a long sleep (60 s) in a background thread, then calls
+        update_interval() and asserts the sleep finishes well within 1 s.
+        """
+        poller = FeedPoller(feeds=[sample_feed], poll_interval=60)
+        sleep_finished = threading.Event()
+
+        def run_sleep():
+            poller._interruptible_sleep(60)
+            sleep_finished.set()
+
+        t = threading.Thread(target=run_sleep, daemon=True)
+        t.start()
+
+        # Give the sleep a moment to enter its wait loop.
+        time.sleep(0.05)
+        poller.update_interval(30)
+
+        assert sleep_finished.wait(timeout=1.0), (
+            "_interruptible_sleep was not interrupted by update_interval()"
+        )
+        assert poller.poll_interval == 30
+        t.join(timeout=1.0)
 
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
