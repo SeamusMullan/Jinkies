@@ -54,3 +54,37 @@ class TestAudioPlayer:
         player = AudioPlayer({"test": "missing.wav"}, sounds_dir=tmp_sounds_dir)
         # Should not raise
         player.play("test")
+
+
+class TestAudioPlayerPlayFile:
+    """Tests for AudioPlayer.play_file()."""
+
+    def test_play_file_relative_path(self, tmp_sounds_dir):
+        """play_file resolves a relative filename against the sounds directory."""
+        generate_wav(tmp_sounds_dir / "custom.wav", frequency=440.0, duration=0.1)
+        player = AudioPlayer({}, sounds_dir=tmp_sounds_dir)
+        # Should not raise; file exists under sounds_dir
+        player.play_file("custom.wav")
+
+    def test_play_file_absolute_path(self, tmp_path):
+        """play_file accepts an absolute path directly."""
+        wav_path = tmp_path / "absolute.wav"
+        generate_wav(wav_path, frequency=440.0, duration=0.1)
+        player = AudioPlayer({}, sounds_dir=tmp_path / "sounds")
+        # Should not raise; file is referenced by absolute path
+        player.play_file(str(wav_path))
+
+    def test_play_file_missing_returns_silently(self, tmp_sounds_dir):
+        """play_file returns without error when the file does not exist."""
+        player = AudioPlayer({}, sounds_dir=tmp_sounds_dir)
+        # Should not raise
+        player.play_file("nonexistent.wav")
+
+    def test_play_file_caches_effect(self, tmp_sounds_dir):
+        """play_file reuses a cached QSoundEffect on repeated calls."""
+        generate_wav(tmp_sounds_dir / "cache_test.wav", frequency=440.0, duration=0.1)
+        player = AudioPlayer({}, sounds_dir=tmp_sounds_dir)
+        player.play_file("cache_test.wav")
+        player.play_file("cache_test.wav")
+        # Only one entry should be in the effects cache.
+        assert len(player._effects) == 1  # noqa: SLF001

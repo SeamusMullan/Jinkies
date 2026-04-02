@@ -101,14 +101,30 @@ class AudioPlayer:
         if not filename:
             return
 
-        path = self.sounds_dir / filename
+        self.play_file(filename)
+
+    def play_file(self, file_path: str | Path) -> None:
+        """Play a specific WAV file by path.
+
+        Accepts either an absolute path or a filename relative to the sounds
+        directory.  Silently returns if the resolved file does not exist.
+
+        Args:
+            file_path: Absolute path or sounds-dir-relative filename of the
+                WAV file to play.
+        """
+        path = Path(file_path)
+        if not path.is_absolute():
+            path = self.sounds_dir / path
+
         if not path.exists():
             return
 
-        if event_type not in self._effects:
+        cache_key = str(path)
+        if cache_key not in self._effects:
             effect = QSoundEffect()
             effect.setSource(QUrl.fromLocalFile(str(path)))
             effect.setVolume(0.7)
-            self._effects[event_type] = effect
+            self._effects[cache_key] = effect
 
-        self._effects[event_type].play()
+        self._effects[cache_key].play()

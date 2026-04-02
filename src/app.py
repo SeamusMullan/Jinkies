@@ -240,8 +240,23 @@ class JinkiesApp:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._toggle_window()
 
+    def _get_feed_by_url(self, url: str) -> Feed | None:
+        """Look up a configured feed by its URL.
+
+        Args:
+            url: The feed URL to search for.
+
+        Returns:
+            The matching :class:`~src.models.Feed`, or ``None`` if not found.
+        """
+        return next((f for f in self.config.feeds if f.url == url), None)
+
     def _on_new_entries(self, entries: list[FeedEntry]) -> None:
         """Handle new entries found by the poller.
+
+        When all entries in the batch belong to a single feed that has a
+        :attr:`~src.models.Feed.sound_file` override, that file is played
+        instead of the global ``"new_entry"`` sound.
 
         Args:
             entries: List of new FeedEntry objects.
@@ -253,7 +268,18 @@ class JinkiesApp:
             self.dashboard.clear_feed_error(entry.feed_url)
 
         self.dashboard.add_entries(entries)
-        self.audio.play("new_entry")
+
+        # Use a per-feed sound override when the batch comes from a single
+        # feed that has one configured; otherwise fall back to the global map.
+        unique_urls = {e.feed_url for e in entries}
+        if len(unique_urls) == 1:
+            feed = self._get_feed_by_url(next(iter(unique_urls)))
+            if feed and feed.sound_file:
+                self.audio.play_file(feed.sound_file)
+            else:
+                self.audio.play("new_entry")
+        else:
+            self.audio.play("new_entry")
 
         count = len(entries)
         if count == 1:
@@ -278,6 +304,9 @@ class JinkiesApp:
         dashboard but remain silent.  The error state is cleared when the
         feed next delivers new entries, so a later failure will notify again.
 
+        When the feed has a :attr:`~src.models.Feed.sound_file` override that
+        file is played instead of the global ``"error"`` sound.
+
         Args:
             url: The feed URL that failed.
             error: The error message.
@@ -286,7 +315,11 @@ class JinkiesApp:
         self.dashboard.mark_feed_error(url, error)
         if url not in self._errored_feeds:
             self._errored_feeds.add(url)
-            self.audio.play("error")
+            feed = self._get_feed_by_url(url)
+            if feed and feed.sound_file:
+                self.audio.play_file(feed.sound_file)
+            else:
+                self.audio.play("error")
             self.notifier.notify("Jinkies — Error", f"Feed error: {url}\n{error}")
 
     def _on_poll_complete(self) -> None:
