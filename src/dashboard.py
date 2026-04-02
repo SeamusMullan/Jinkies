@@ -83,6 +83,7 @@ class Dashboard(QMainWindow):
         self._last_poll_time = ""
         self._is_paused = False
         self._feed_errors: dict[str, str] = {}
+        self._feed_backoff: dict[str, int] = {}  # url → backoff seconds
 
         self._setup_toolbar()
         self._setup_central()
@@ -328,21 +329,41 @@ class Dashboard(QMainWindow):
         self._update_feed_item_state(url)
         self._statusbar.showMessage(f"Feed error: {error}", 8000)
 
-    def clear_feed_error(self, url: str) -> None:
-        """Remove the error state for a feed, restoring its normal appearance.
+    def mark_feed_backoff(self, url: str, backoff_secs: int) -> None:
+        """Record that a feed is in backoff and update its list-item tooltip.
 
-        Restores the feed list item to green and clears any error tooltip.
+        The backoff delay is appended to the existing error tooltip so the
+        user can see when the next retry is scheduled.
+
+        Args:
+            url: The feed URL that is in a backoff state.
+            backoff_secs: Seconds until the next retry attempt.
+        """
+        self._feed_backoff[url] = backoff_secs
+        self._update_feed_item_state(url)
+
+    def clear_feed_error(self, url: str) -> None:
+        """Remove the error and backoff state for a feed, restoring its normal appearance.
+
+        Restores the feed list item to green and clears any error or backoff
+        tooltip.
 
         Args:
             url: The feed URL whose error state should be cleared.
         """
-        if url not in self._feed_errors:
+        if url not in self._feed_errors and url not in self._feed_backoff:
             return
-        self._feed_errors.pop(url)
+        self._feed_errors.pop(url, None)
+        self._feed_backoff.pop(url, None)
         self._update_feed_item_state(url)
 
     def _update_feed_item_state(self, url: str) -> None:
         """Update the colour and tooltip of the feed list item for *url*.
+
+        When the feed has an active error the item is coloured red.  If a
+        backoff delay is also recorded the tooltip includes a human-readable
+        "Retrying in ~N min" note so the user can see when the next attempt
+        is scheduled.
 
         Args:
             url: The feed URL whose list item should be updated.
@@ -352,7 +373,12 @@ class Dashboard(QMainWindow):
             if item and item.data(Qt.ItemDataRole.UserRole) == url:
                 if url in self._feed_errors:
                     item.setForeground(QColor(200, 50, 50))
-                    item.setToolTip(f"Error: {self._feed_errors[url]}")
+                    tooltip = f"Error: {self._feed_errors[url]}"
+                    backoff = self._feed_backoff.get(url, 0)
+                    if backoff:
+                        mins = max(1, round(backoff / 60))
+                        tooltip += f"\nRetrying in ~{mins} min (backoff)"
+                    item.setToolTip(tooltip)
                 else:
                     enabled = item.data(Qt.ItemDataRole.UserRole + 1)
                     color = QColor(0, 180, 0) if enabled else QColor(150, 150, 150)

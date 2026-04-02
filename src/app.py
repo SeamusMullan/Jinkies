@@ -200,6 +200,7 @@ class JinkiesApp:
         self.poller.feed_error.connect(self._on_feed_error)
         self.poller.poll_complete.connect(self._on_poll_complete)
         self.poller.poll_time_updated.connect(self._on_poll_time_updated)
+        self.poller.feed_backoff_changed.connect(self._on_feed_backoff_changed)
         self.poller.start()
 
     def _setup_tray_menu(self) -> None:
@@ -308,6 +309,25 @@ class JinkiesApp:
             if feed.url == url:
                 feed.last_poll_time = timestamp
                 break
+
+    def _on_feed_backoff_changed(self, url: str, backoff_secs: int) -> None:
+        """Handle a change in a feed's exponential-backoff state.
+
+        When *backoff_secs* is ``0`` the feed has recovered from a failure:
+        any stored error state is cleared so that a future error can notify
+        again.  When *backoff_secs* is non-zero the feed list tooltip is
+        updated to show the scheduled retry delay.
+
+        Args:
+            url: The feed URL whose backoff state changed.
+            backoff_secs: Seconds until the next retry, or ``0`` if the
+                backoff has been cleared following a successful poll.
+        """
+        if backoff_secs == 0:
+            self._errored_feeds.discard(url)
+            self.dashboard.clear_feed_error(url)
+        else:
+            self.dashboard.mark_feed_backoff(url, backoff_secs)
 
     def _on_pause_toggle(self) -> None:
         """Toggle polling pause state."""
