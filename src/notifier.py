@@ -23,6 +23,23 @@ from PySide6.QtWidgets import (
 if TYPE_CHECKING:
     from PySide6.QtGui import QIcon
 
+# Module-level singleton registry of currently visible NotificationDialogs.
+# Keeping this at module scope (rather than as a class variable) makes the
+# shared, global nature explicit and allows tests or other callers to reset
+# the list via ``clear_active_notifications()`` without reaching into class
+# internals.
+_active_notifications: list[NotificationDialog] = []
+
+
+def clear_active_notifications() -> None:
+    """Remove all entries from the active-notification registry.
+
+    Call this in test tear-down (or anywhere a clean slate is needed) to
+    prevent stale references from one test context affecting the stacking
+    position or garbage-collection behaviour of notifications in another.
+    """
+    _active_notifications.clear()
+
 
 class NotificationDialog(QDialog):
     """Custom notification popup for Windows.
@@ -33,8 +50,6 @@ class NotificationDialog(QDialog):
     Attributes:
         _dismiss_timer: Timer for auto-dismissal.
     """
-
-    _active_notifications: list[NotificationDialog] = []
 
     def __init__(
         self,
@@ -68,7 +83,7 @@ class NotificationDialog(QDialog):
         self._dismiss_timer.start(timeout_ms)
 
         self._fade_in()
-        NotificationDialog._active_notifications.append(self)
+        _active_notifications.append(self)
 
     def _setup_ui(self, title: str, body: str) -> None:
         """Build the notification UI.
@@ -129,7 +144,7 @@ class NotificationDialog(QDialog):
         if not screen:
             return
         geo = screen.availableGeometry()
-        offset = len(NotificationDialog._active_notifications) * (self.sizeHint().height() + 8)
+        offset = len(_active_notifications) * (self.sizeHint().height() + 8)
         x = geo.right() - self.sizeHint().width() - 16
         y = geo.bottom() - self.sizeHint().height() - 16 - offset
         self.move(x, y)
@@ -156,8 +171,8 @@ class NotificationDialog(QDialog):
     def _dismiss(self) -> None:
         """Close and clean up the notification."""
         self._dismiss_timer.stop()
-        if self in NotificationDialog._active_notifications:
-            NotificationDialog._active_notifications.remove(self)
+        if self in _active_notifications:
+            _active_notifications.remove(self)
         self.close()
         self.deleteLater()
 
