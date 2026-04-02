@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
-from src.feed_import import import_local_feed, import_opml
+import feedparser
+
+from src.feed_import import (
+    _build_feed_url,
+    _extract_job_feeds,
+    import_local_feed,
+    import_opml,
+)
 
 SAMPLE_OPML = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -247,3 +254,149 @@ class TestImportJenkinsFeed:
         atom_file.write_text(SAMPLE_JENKINS_ATOM)
         feeds = import_local_feed(atom_file)
         assert feeds[0].url == "http://localhost:8080/rssAll"
+
+
+# ---------------------------------------------------------------------------
+# Helpers for building minimal feedparser dicts used by the unit tests below.
+# ---------------------------------------------------------------------------
+
+def _make_parsed(entries: list[dict], links: list[dict] | None = None) -> feedparser.FeedParserDict:
+    """Return a minimal feedparser-style dict with the given entries and links.
+
+    Args:
+        entries: List of entry dicts, each with at least a ``link`` key.
+        links: Optional list of link dicts for ``parsed.feed.links``.
+
+    Returns:
+        A ``feedparser.FeedParserDict`` suitable for passing to private helpers.
+    """
+    raw: dict = {
+        "feed": {"links": links or [], "title": "Test Feed"},
+        "entries": [feedparser.FeedParserDict(e) for e in entries],
+        "bozo": False,
+    }
+    return feedparser.FeedParserDict(raw)
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tests for _build_feed_url
+# ---------------------------------------------------------------------------
+
+class TestBuildFeedUrlEdgeCases:
+    """Unit tests for _build_feed_url covering non-happy-path scenarios."""
+
+    def test_empty_base_url_no_self_link_returns_path(self, tmp_path):
+        """When base_url is empty and there is no self link, fall back to str(path)."""
+        path = tmp_path / "myfeed.atom"
+        parsed = _make_parsed([], links=[])
+        result = _build_feed_url(parsed, base_url="", path=path)
+        assert result == str(path)
+
+    def test_self_link_takes_priority_over_base_url(self, tmp_path):
+        """An explicit self link should always win over base_url reconstruction."""
+        path = tmp_path / "rssAll.atom"
+        links = [{"rel": "self", "href": "https://ci.example.com/rssAll"}]
+        parsed = _make_parsed([], links=links)
+        result = _build_feed_url(parsed, base_url="http://localhost:8080", path=path)
+        assert result == "https://ci.example.com/rssAll"
+
+    def test_base_url_with_known_stem_is_reconstructed(self, tmp_path):
+        """Without a self link, base_url + stem should be reconstructed correctly."""
+        path = tmp_path / "rssLatest.atom"
+        parsed = _make_parsed([], links=[{"rel": "alternate", "href": "http://ci.local/"}])
+        result = _build_feed_url(parsed, base_url="http://ci.local", path=path)
+        assert result == "http://ci.local/rssLatest"
+
+    def test_numbered_stem_is_normalised(self, tmp_path):
+        """Filenames like ``rssAll(2)`` should be normalised to ``rssAll``."""
+        path = tmp_path / "rssAll(2).atom"
+        parsed = _make_parsed([])
+        result = _build_feed_url(parsed, base_url="http://ci.local", path=path)
+        assert result == "http://ci.local/rssAll"
+
+
+# ---------------------------------------------------------------------------
+# Edge-case tests for _extract_job_feeds
+# ---------------------------------------------------------------------------
+
+# Parametrize the "link does not contribute a job" scenarios in one table so
+# that adding a new corner-case is just adding a row.
+_SKIPPED_ENTRY_CASES = [
+    pytest.param(
+        "",
+        id="empty_link",
+    ),
+    pytest.param(
+        "http://localhost:8080/view/All/",
+        id="no_job_segment",
+    ),
+    pytest.param(
+        # Different host – removeprefix won't strip the base_url prefix,
+        # leaving the full URL as `after_base`; the first part won't be "job".
+        "https://other-host.example.com/job/SomeName/42/",
+        id="link_different_host",
+    ),
+    pytest.param(
+        # Same host but no /job/ anywhere in the link.
+        "http://localhost:8080/search?q=test",
+        id="link_no_job_slash",
+    ),
+]
+
+
+class TestExtractJobFeedsEdgeCases:
+    """Unit tests for _extract_job_feeds covering edge cases."""
+
+    def test_empty_base_url_returns_no_feeds(self):
+        """_extract_job_feeds must return an empty list when base_url is empty."""
+        parsed = _make_parsed([{"link": "http://localhost:8080/job/Foo/1/"}])
+        result = _extract_job_feeds(parsed, base_url="")
+        assert result == []
+
+    @pytest.mark.parametrize("link", _SKIPPED_ENTRY_CASES)
+    def test_non_contributing_entry_is_skipped(self, link: str):
+        """Entries that cannot yield a valid job path must be silently skipped."""
+        parsed = _make_parsed([{"link": link, "title": "Irrelevant #1"}])
+        result = _extract_job_feeds(parsed, base_url="http://localhost:8080")
+        assert result == [], f"Expected no job feeds for link={link!r}"
+
+    def test_deeply_nested_job_path(self):
+        """Three levels of /job/Name nesting should all be captured in the feed URL."""
+        entries = [
+            {
+                "link": "http://localhost:8080/job/Org/job/Team/job/Service/7/",
+                "title": "Org » Team » Service #7 (stable)",
+            }
+        ]
+        parsed = _make_parsed(entries)
+        result = _extract_job_feeds(parsed, base_url="http://localhost:8080")
+        assert len(result) == 1
+        assert result[0].url == "http://localhost:8080/job/Org/job/Team/job/Service/rssAll"
+
+    def test_duplicate_entries_produce_single_feed(self):
+        """Multiple builds from the same job should collapse into one feed URL."""
+        entries = [
+            {"link": "http://localhost:8080/job/Alpha/job/Beta/3/", "title": "Alpha » Beta #3"},
+            {"link": "http://localhost:8080/job/Alpha/job/Beta/4/", "title": "Alpha » Beta #4"},
+        ]
+        parsed = _make_parsed(entries)
+        result = _extract_job_feeds(parsed, base_url="http://localhost:8080")
+        assert len(result) == 1
+        assert result[0].url == "http://localhost:8080/job/Alpha/job/Beta/rssAll"
+
+    def test_mixed_valid_and_invalid_entries(self):
+        """Only entries with a valid job path should produce feeds; others are ignored."""
+        entries = [
+            # Valid job entry
+            {"link": "http://localhost:8080/job/MyProject/job/API/10/", "title": "MyProject » API #10"},
+            # No /job/ in link
+            {"link": "http://localhost:8080/view/All/", "title": "View page #1"},
+            # Different host
+            {"link": "https://other.example.com/job/Ghost/1/", "title": "Ghost #1"},
+            # Empty link
+            {"link": "", "title": "Empty #1"},
+        ]
+        parsed = _make_parsed(entries)
+        result = _extract_job_feeds(parsed, base_url="http://localhost:8080")
+        assert len(result) == 1
+        assert result[0].url == "http://localhost:8080/job/MyProject/job/API/rssAll"
