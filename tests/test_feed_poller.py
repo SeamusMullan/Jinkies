@@ -365,3 +365,232 @@ class TestGetEntryId:
 
         poller._poll_feed(sample_feed)
         assert len(entries) == 1  # still 1 — not re-emitted
+
+
+class TestFeedPollerBackoff:
+    """Unit tests for FeedPoller exponential-backoff logic."""
+
+    def test_compute_backoff_secs_initial_failure(self, sample_feed):
+        """First failure should produce a 60-second (1 min) backoff delay."""
+        poller = FeedPoller(feeds=[sample_feed])
+        assert poller._compute_backoff_secs(0) == 60
+
+    def test_compute_backoff_secs_doubles_each_failure(self, sample_feed):
+        """Backoff delay should double with each consecutive failure."""
+        poller = FeedPoller(feeds=[sample_feed])
+        assert poller._compute_backoff_secs(0) == 60    # 1 min
+        assert poller._compute_backoff_secs(1) == 120   # 2 min
+        assert poller._compute_backoff_secs(2) == 240   # 4 min
+        assert poller._compute_backoff_secs(3) == 480   # 8 min
+
+    def test_compute_backoff_secs_capped_at_max(self, sample_feed):
+        """Backoff delay must not exceed max_backoff_secs."""
+        poller = FeedPoller(feeds=[sample_feed], max_backoff_secs=300)
+        assert poller._compute_backoff_secs(10) == 300
+
+    def test_default_max_backoff_is_3600(self, sample_feed):
+        """Default max_backoff_secs should be 3600 (60 minutes)."""
+        poller = FeedPoller(feeds=[sample_feed])
+        assert poller.max_backoff_secs == 3600
+        # 2^7 * 60 = 7680 > 3600 — must be capped
+        assert poller._compute_backoff_secs(7) == 3600
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_failure_increments_backoff_counter(
+        self, mock_parse, _mock_creds, sample_feed,
+    ):
+        """Each failure should increment the failure counter for the feed."""
+        mock_parse.side_effect = OSError("Network error")
+        poller = FeedPoller(feeds=[sample_feed])
+
+        poller._poll_feed(sample_feed)
+        assert poller._backoff_counts.get(sample_feed.url) == 1
+
+        poller._poll_feed(sample_feed)
+        assert poller._backoff_counts.get(sample_feed.url) == 2
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_failure_sets_next_poll_time(
+        self, mock_parse, _mock_creds, sample_feed,
+    ):
+        """A failure should schedule the next poll in the future."""
+        import time as _time
+
+        mock_parse.side_effect = OSError("Network error")
+        poller = FeedPoller(feeds=[sample_feed])
+
+        before = _time.time()
+        poller._poll_feed(sample_feed)
+        after = _time.time()
+
+        next_time = poller._next_poll_times.get(sample_feed.url, 0.0)
+        # Next poll time must be in the future (at least 60 s away).
+        assert next_time >= before + 60
+        assert next_time <= after + 60 + 1  # allow small clock drift
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_success_resets_backoff_counter(
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result,
+    ):
+        """A successful poll must reset the failure counter."""
+        mock_parse.side_effect = [OSError("fail"), mock_feedparser_result]
+        poller = FeedPoller(feeds=[sample_feed])
+
+        poller._poll_feed(sample_feed)  # fails
+        assert sample_feed.url in poller._backoff_counts
+
+        poller._poll_feed(sample_feed)  # succeeds
+        assert sample_feed.url not in poller._backoff_counts
+        assert sample_feed.url not in poller._next_poll_times
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_failure_emits_feed_backoff_changed(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        """A failure must emit feed_backoff_changed with the backoff delay."""
+        mock_parse.side_effect = OSError("Network error")
+        poller = FeedPoller(feeds=[sample_feed])
+
+        backoff_events: list[tuple[str, int]] = []
+        poller.feed_backoff_changed.connect(
+            lambda url, secs: backoff_events.append((url, secs))
+        )
+        poller._poll_feed(sample_feed)
+
+        assert len(backoff_events) == 1
+        assert backoff_events[0][0] == sample_feed.url
+        assert backoff_events[0][1] == 60  # first failure → 1 min
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_second_failure_emits_doubled_backoff(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        """The second consecutive failure must double the backoff delay."""
+        mock_parse.side_effect = OSError("Network error")
+        poller = FeedPoller(feeds=[sample_feed])
+
+        backoff_events: list[tuple[str, int]] = []
+        poller.feed_backoff_changed.connect(
+            lambda url, secs: backoff_events.append((url, secs))
+        )
+        poller._poll_feed(sample_feed)
+        poller._poll_feed(sample_feed)
+
+        assert backoff_events[0][1] == 60   # 1 min
+        assert backoff_events[1][1] == 120  # 2 min
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_success_after_failure_emits_backoff_cleared(
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
+    ):
+        """Recovery from backoff must emit feed_backoff_changed(url, 0)."""
+        mock_parse.side_effect = [OSError("fail"), mock_feedparser_result]
+        poller = FeedPoller(feeds=[sample_feed])
+
+        backoff_events: list[tuple[str, int]] = []
+        poller.feed_backoff_changed.connect(
+            lambda url, secs: backoff_events.append((url, secs))
+        )
+
+        poller._poll_feed(sample_feed)  # fails → backoff set
+        poller._poll_feed(sample_feed)  # succeeds → backoff cleared
+
+        assert len(backoff_events) == 2
+        assert backoff_events[0][1] == 60  # backoff set
+        assert backoff_events[1][1] == 0   # backoff cleared
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_success_without_prior_failure_does_not_emit_backoff_cleared(
+        self, mock_parse, _mock_creds, sample_feed, mock_feedparser_result, qtbot,
+    ):
+        """A clean first poll must not emit a spurious backoff-cleared signal."""
+        mock_parse.return_value = mock_feedparser_result
+        poller = FeedPoller(feeds=[sample_feed])
+
+        backoff_events: list[tuple[str, int]] = []
+        poller.feed_backoff_changed.connect(
+            lambda url, secs: backoff_events.append((url, secs))
+        )
+        poller._poll_feed(sample_feed)
+
+        assert len(backoff_events) == 0
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_bozo_error_applies_backoff(
+        self, mock_parse, _mock_creds, sample_feed, qtbot,
+    ):
+        """A bozo parse error with no entries should also trigger backoff."""
+        result = MagicMock()
+        result.bozo = True
+        result.entries = []
+        result.bozo_exception = ValueError("Bad XML")
+        mock_parse.return_value = result
+
+        poller = FeedPoller(feeds=[sample_feed])
+        backoff_events: list[tuple[str, int]] = []
+        poller.feed_backoff_changed.connect(
+            lambda url, secs: backoff_events.append((url, secs))
+        )
+        poller._poll_feed(sample_feed)
+
+        assert len(backoff_events) == 1
+        assert backoff_events[0][1] == 60
+
+    def test_feed_in_backoff_is_skipped_by_run_logic(self, sample_feed):
+        """A feed whose backoff window has not elapsed must not be polled."""
+        import time as _time
+
+        poller = FeedPoller(feeds=[sample_feed])
+        # Place feed well into the future backoff window.
+        poller._next_poll_times[sample_feed.url] = _time.time() + 10_000
+        poller._backoff_counts[sample_feed.url] = 1
+
+        polled: list[str] = []
+
+        def capturing_poll(feed: Feed) -> None:
+            polled.append(feed.url)
+
+        poller._poll_feed = capturing_poll  # type: ignore[method-assign]
+
+        # Replicate the per-feed gate from run().
+        for feed in poller.feeds:
+            if not feed.enabled:
+                continue
+            if _time.time() < poller._next_poll_times.get(feed.url, 0.0):
+                continue
+            poller._poll_feed(feed)
+
+        assert sample_feed.url not in polled
+
+    def test_feed_past_backoff_window_is_polled(self, sample_feed):
+        """Once the backoff window expires the feed must be polled again."""
+        import time as _time
+
+        poller = FeedPoller(feeds=[sample_feed])
+        # Set backoff window to the past.
+        poller._next_poll_times[sample_feed.url] = _time.time() - 1
+        poller._backoff_counts[sample_feed.url] = 1
+
+        polled: list[str] = []
+
+        def capturing_poll(feed: Feed) -> None:
+            polled.append(feed.url)
+
+        poller._poll_feed = capturing_poll  # type: ignore[method-assign]
+
+        for feed in poller.feeds:
+            if not feed.enabled:
+                continue
+            if _time.time() < poller._next_poll_times.get(feed.url, 0.0):
+                continue
+            poller._poll_feed(feed)
+
+        assert sample_feed.url in polled

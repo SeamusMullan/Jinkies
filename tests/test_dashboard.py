@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+from PySide6.QtWidgets import QMessageBox
+
 from src.dashboard import Dashboard
 from src.models import Feed, FeedEntry
 
@@ -384,3 +386,207 @@ class TestDashboard:
         ]
         dashboard.add_entries(entries)
         assert len(dashboard.entries) == 10
+
+
+class TestMarkAsSeen:
+    """Tests for the bulk mark-as-seen actions."""
+
+    def _make_entries(self) -> list[FeedEntry]:
+        return [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Feed A Entry 1",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="a1",
+                seen=False,
+            ),
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Feed A Entry 2",
+                link="https://a.com/2",
+                published="2024-01-02",
+                entry_id="a2",
+                seen=False,
+            ),
+            FeedEntry(
+                feed_url="https://b.com/feed",
+                title="Feed B Entry 1",
+                link="https://b.com/1",
+                published="2024-01-01",
+                entry_id="b1",
+                seen=False,
+            ),
+        ]
+
+    def test_do_mark_all_seen_marks_all_entries(self, qtbot, tmp_path):
+        """_do_mark_all_seen(None) must mark every entry as seen."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = self._make_entries()
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+
+        dashboard._do_mark_all_seen(None)
+
+        assert all(e.seen for e in dashboard.entries)
+
+    def test_do_mark_all_seen_scoped_to_feed(self, qtbot, tmp_path):
+        """_do_mark_all_seen('Feed A') must only mark Feed A entries."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = self._make_entries()
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+
+        dashboard._do_mark_all_seen("Feed A")
+
+        feed_a_entries = [e for e in dashboard.entries if e.feed_url == "https://a.com/feed"]
+        feed_b_entries = [e for e in dashboard.entries if e.feed_url == "https://b.com/feed"]
+        assert all(e.seen for e in feed_a_entries)
+        assert all(not e.seen for e in feed_b_entries)
+
+    def test_do_mark_all_seen_persists_to_disk(self, qtbot, tmp_path):
+        """_do_mark_all_seen should write the updated seen state to store.json."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        store_path = tmp_path / "store.json"
+        dashboard._entries_store_location = store_path
+        dashboard.entries = self._make_entries()
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+
+        dashboard._do_mark_all_seen(None)
+
+        with open(store_path) as f:
+            data = json.load(f)
+        assert all(e["seen"] for e in data["entries"])
+
+    def test_do_mark_all_seen_noop_when_already_seen(self, qtbot, tmp_path):
+        """_do_mark_all_seen should not write to disk if nothing changed."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        store_path = tmp_path / "store.json"
+        dashboard._entries_store_location = store_path
+        entries = self._make_entries()
+        for e in entries:
+            e.seen = True
+        dashboard.entries = entries
+
+        dashboard._do_mark_all_seen(None)
+
+        assert not store_path.exists()
+
+    def test_on_mark_all_seen_clicked_all_feeds_confirmed(self, qtbot, tmp_path):
+        """Clicking 'Mark All Seen' on All Feeds scope with confirm=Yes marks all."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = self._make_entries()
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        # Ensure filter is "All Feeds"
+        dashboard._filter_combo.setCurrentText("All Feeds")
+
+        with patch(
+            "src.dashboard.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            dashboard._on_mark_all_seen_clicked()
+
+        assert all(e.seen for e in dashboard.entries)
+
+    def test_on_mark_all_seen_clicked_all_feeds_cancelled(self, qtbot, tmp_path):
+        """Clicking 'Mark All Seen' on All Feeds scope with confirm=No changes nothing."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = self._make_entries()
+        dashboard._filter_combo.setCurrentText("All Feeds")
+
+        with patch(
+            "src.dashboard.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            dashboard._on_mark_all_seen_clicked()
+
+        assert all(not e.seen for e in dashboard.entries)
+
+    def test_on_mark_all_seen_clicked_single_feed_no_dialog(self, qtbot, tmp_path):
+        """Clicking 'Mark All Seen' for a specific feed skips the confirmation dialog."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.entries = self._make_entries()
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard._filter_combo.setCurrentText("Feed A")
+
+        with patch("src.dashboard.QMessageBox.question") as mock_dlg:
+            dashboard._on_mark_all_seen_clicked()
+            mock_dlg.assert_not_called()
+
+        feed_a_entries = [e for e in dashboard.entries if e.feed_url == "https://a.com/feed"]
+        feed_b_entries = [e for e in dashboard.entries if e.feed_url == "https://b.com/feed"]
+        assert all(e.seen for e in feed_a_entries)
+        assert all(not e.seen for e in feed_b_entries)
+
+    def test_mark_selected_seen(self, qtbot, tmp_path):
+        """_mark_selected_seen should mark only the selected rows as seen."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        entries = self._make_entries()
+        dashboard.entries = entries
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard._refresh_table()
+
+        # Select row 0 (which maps to the last entry in reversed order)
+        dashboard._entry_table.selectRow(0)
+        dashboard._mark_selected_seen()
+
+        # Exactly one entry should be marked seen — the one at display row 0
+        seen_entries = [e for e in dashboard.entries if e.seen]
+        assert len(seen_entries) == 1
+
+    def test_mark_selected_seen_noop_when_nothing_selected(self, qtbot, tmp_path):
+        """_mark_selected_seen with no selection should not write to disk."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        store_path = tmp_path / "store.json"
+        dashboard._entries_store_location = store_path
+        dashboard.entries = self._make_entries()
+        dashboard._refresh_table()
+        # No row selected
+        dashboard._entry_table.clearSelection()
+
+        dashboard._mark_selected_seen()
+
+        assert not store_path.exists()
+        assert all(not e.seen for e in dashboard.entries)
+
+    def test_toolbar_mark_all_seen_action_exists(self, qtbot):
+        """The toolbar should have a 'Mark All Seen' action."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        assert hasattr(dashboard, "_mark_all_seen_action")
+        assert dashboard._mark_all_seen_action.text() == "Mark All Seen"
+

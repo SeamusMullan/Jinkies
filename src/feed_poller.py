@@ -2,6 +2,19 @@
 
 Runs feed polling in a QThread with Qt signal/slot integration
 for communicating new entries and errors to the main thread.
+
+Exponential backoff
+-------------------
+When a feed request fails (network error, 5xx, or parse error),
+the poller enters a per-feed *backoff* state so that it does not
+hammer the server repeatedly.  The backoff delay starts at
+``_BACKOFF_BASE_SECS`` (60 s / 1 min) and doubles with every
+consecutive failure, capped at ``max_backoff_secs`` (default
+3 600 s / 60 min).  A successful poll resets the counter to zero.
+
+The ``feed_backoff_changed`` signal is emitted whenever the backoff
+state of a feed changes so that the UI can reflect the delay in the
+feed list tooltip.
 """
 
 from __future__ import annotations
@@ -30,6 +43,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Starting backoff interval in seconds (1 minute).
+_BACKOFF_BASE_SECS: int = 60
+
 
 class FeedPoller(QThread):
     """Background thread that polls Atom/RSS feeds on a timer.
@@ -40,23 +56,29 @@ class FeedPoller(QThread):
         poll_complete: Emitted after each full polling cycle.
         poll_time_updated: Emitted with (feed_url, iso_timestamp) after a
             successful poll so the main thread can update the Feed object.
+        feed_backoff_changed: Emitted with (feed_url, backoff_seconds) when
+            the backoff state of a feed changes.  A value of ``0`` means the
+            feed has recovered and its backoff has been cleared.
 
     Attributes:
         feeds: List of Feed objects to poll.
         poll_interval: Seconds between poll cycles.
         seen_ids: Set of already-seen entry IDs.
+        max_backoff_secs: Maximum backoff delay in seconds (default 3600).
     """
 
     new_entries_found = Signal(list)
     feed_error = Signal(str, str)
     poll_complete = Signal()
     poll_time_updated = Signal(str, str)
+    feed_backoff_changed = Signal(str, int)
 
     def __init__(
         self,
         feeds: list[Feed],
         poll_interval: int = 60,
         seen_ids: set[str] | None = None,
+        max_backoff_secs: int = 3600,
     ) -> None:
         """Initialize the feed poller.
 
@@ -64,20 +86,28 @@ class FeedPoller(QThread):
             feeds: List of feeds to monitor.
             poll_interval: Seconds between poll cycles.
             seen_ids: Set of entry IDs already seen.
+            max_backoff_secs: Upper limit for the exponential backoff delay
+                in seconds.  Defaults to 3600 (60 minutes).
         """
         super().__init__()
         self._feeds_lock = Lock()
         self.feeds = feeds
         self.poll_interval = poll_interval
         self.seen_ids: set[str] = seen_ids or set()
+        self.max_backoff_secs = max_backoff_secs
         self._pause_event = Event()
         self._pause_event.set()  # Start unpaused
+        # Per-feed backoff state (only accessed from the poller thread).
+        self._backoff_counts: dict[str, int] = {}
+        self._next_poll_times: dict[str, float] = {}
 
     def run(self) -> None:
         """Execute the polling loop.
 
         Polls all enabled feeds sequentially, emitting signals for new
-        entries and errors, then sleeps until the next cycle.
+        entries and errors, then sleeps until the next cycle.  Feeds that
+        are currently in an exponential-backoff window are skipped until
+        their backoff delay has elapsed.
         """
         while not self.isInterruptionRequested():
             self._pause_event.wait()
@@ -91,6 +121,9 @@ class FeedPoller(QThread):
                     break
                 if not feed.enabled:
                     continue
+                if time.time() < self._next_poll_times.get(feed.url, 0.0):
+                    # Feed is still within its backoff window; skip this cycle.
+                    continue
                 self._poll_feed(feed)
 
             self.poll_complete.emit()
@@ -99,6 +132,10 @@ class FeedPoller(QThread):
     def _poll_feed(self, feed: Feed) -> None:
         """Poll a single feed and emit signals for new entries.
 
+        On failure the feed enters an exponential-backoff state so that
+        subsequent cycles skip it until the backoff window elapses.  A
+        successful poll resets the backoff counter.
+
         Args:
             feed: The feed to poll.
         """
@@ -106,8 +143,11 @@ class FeedPoller(QThread):
             parsed = self._fetch_feed(feed)
             if parsed.bozo and not parsed.entries:
                 error_msg = str(parsed.bozo_exception) if parsed.bozo_exception else "Parse error"
-                self.feed_error.emit(feed.url, error_msg)
+                self._handle_poll_failure(feed, error_msg)
                 return
+
+            # Successful parse — reset any active backoff before processing.
+            self._handle_poll_success(feed)
 
             new_entries = []
             for entry in parsed.entries:
@@ -137,10 +177,61 @@ class FeedPoller(QThread):
                 self.new_entries_found.emit(new_entries)
 
         except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as e:
-            self.feed_error.emit(feed.url, str(e))
+            self._handle_poll_failure(feed, str(e))
         except Exception:
             logger.exception("Unexpected error polling feed %s", feed.url)
             raise
+
+    def _compute_backoff_secs(self, failure_count: int) -> int:
+        """Compute the exponential backoff delay for a given failure count.
+
+        Backoff starts at ``_BACKOFF_BASE_SECS`` (1 min) and doubles with
+        every consecutive failure, capped at :attr:`max_backoff_secs`.
+
+        Args:
+            failure_count: Number of consecutive failures so far (0-indexed).
+                Pass ``0`` for the delay after the very first failure.
+
+        Returns:
+            Delay in seconds before the next poll attempt.
+        """
+        return min(_BACKOFF_BASE_SECS * (2 ** failure_count), self.max_backoff_secs)
+
+    def _handle_poll_success(self, feed: Feed) -> None:
+        """Reset backoff state after a successful poll.
+
+        Clears the failure counter and scheduled next-poll time for *feed*.
+        Emits ``feed_backoff_changed(url, 0)`` only if the feed was
+        previously in a backoff state so that the UI can remove the
+        backoff indicator.
+
+        Args:
+            feed: The feed whose poll succeeded.
+        """
+        was_in_backoff = feed.url in self._backoff_counts
+        self._backoff_counts.pop(feed.url, None)
+        self._next_poll_times.pop(feed.url, None)
+        if was_in_backoff:
+            self.feed_backoff_changed.emit(feed.url, 0)
+
+    def _handle_poll_failure(self, feed: Feed, error_msg: str) -> None:
+        """Record a poll failure and schedule the next retry with backoff.
+
+        Emits both ``feed_error`` (with the human-readable message) and
+        ``feed_backoff_changed`` (with the computed delay in seconds) so
+        that callers can update error indicators and backoff state
+        independently.
+
+        Args:
+            feed: The feed whose poll failed.
+            error_msg: Human-readable description of the error.
+        """
+        self.feed_error.emit(feed.url, error_msg)
+        failure_count = self._backoff_counts.get(feed.url, 0)
+        backoff_secs = self._compute_backoff_secs(failure_count)
+        self._backoff_counts[feed.url] = failure_count + 1
+        self._next_poll_times[feed.url] = time.time() + backoff_secs
+        self.feed_backoff_changed.emit(feed.url, backoff_secs)
 
     def _get_entry_id(self, entry: object) -> str:
         """Return a stable unique ID for a feed entry.
