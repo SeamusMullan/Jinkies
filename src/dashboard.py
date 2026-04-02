@@ -10,7 +10,7 @@ import datetime
 import json
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
+    QMessageBox,
     QSplitter,
     QStatusBar,
     QTableWidget,
@@ -59,6 +61,9 @@ class Dashboard(QMainWindow):
     import_feeds_requested = Signal()
     settings_requested = Signal()
     pause_requested = Signal()
+    #: Emitted when entries should be marked as seen.  The argument is either
+    #: ``None`` (mark all feeds) or a feed *name* string (scope to one feed).
+    mark_all_seen_requested = Signal(object)
 
     def __init__(self) -> None:
         """Initialize the dashboard window."""
@@ -165,6 +170,11 @@ class Dashboard(QMainWindow):
         self._pause_action = toolbar.addAction("Pause")
         self._pause_action.triggered.connect(self._on_pause_clicked)
 
+        toolbar.addSeparator()
+
+        self._mark_all_seen_action = toolbar.addAction("Mark All Seen")
+        self._mark_all_seen_action.triggered.connect(self._on_mark_all_seen_clicked)
+
     def _setup_central(self) -> None:
         """Create the central widget with feed list, entry table, and filter."""
         central = QWidget()
@@ -207,6 +217,8 @@ class Dashboard(QMainWindow):
         self._entry_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._entry_table.setSortingEnabled(True)
         self._entry_table.doubleClicked.connect(self._on_entry_double_click)
+        self._entry_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._entry_table.customContextMenuRequested.connect(self._on_entry_table_context_menu)
         splitter.addWidget(self._entry_table)
 
         splitter.setSizes([200, 600])
@@ -418,6 +430,106 @@ class Dashboard(QMainWindow):
                 entry.seen = True
                 self._save_entries_store()
                 self._refresh_table()
+
+    def _on_entry_table_context_menu(self, pos: QPoint) -> None:
+        """Show a right-click context menu for the entry table.
+
+        The menu provides two actions:
+
+        * **Mark Selected as Seen** — marks only the currently highlighted rows.
+        * **Mark All as Seen** — marks all entries in the current filter scope.
+          When the scope is "All Feeds" the label is appended with "…" to signal
+          that a confirmation dialog will follow.
+
+        Args:
+            pos: The viewport-relative position of the right-click.
+        """
+        menu = QMenu(self)
+
+        mark_selected_action = menu.addAction("Mark Selected as Seen")
+        mark_selected_action.triggered.connect(self._mark_selected_seen)
+
+        menu.addSeparator()
+
+        current_filter = self._filter_combo.currentText()
+        if current_filter == "All Feeds":
+            mark_all_label = "Mark All as Seen…"
+        else:
+            mark_all_label = f'Mark All in "{current_filter}" as Seen'
+        mark_all_action = menu.addAction(mark_all_label)
+        mark_all_action.triggered.connect(self._on_mark_all_seen_clicked)
+
+        menu.exec(self._entry_table.viewport().mapToGlobal(pos))
+
+    def _on_mark_all_seen_clicked(self) -> None:
+        """Handle the "Mark All Seen" toolbar button and context-menu action.
+
+        When the filter is set to "All Feeds" a confirmation dialog is shown
+        first to prevent accidental bulk-marking.  When a specific feed is
+        selected the action is applied immediately without a prompt.
+        """
+        current_filter = self._filter_combo.currentText()
+        if current_filter == "All Feeds":
+            reply = QMessageBox.question(
+                self,
+                "Mark All as Seen",
+                "Mark all entries across all feeds as seen?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            self._do_mark_all_seen(None)
+        else:
+            self._do_mark_all_seen(current_filter)
+
+    def _do_mark_all_seen(self, feed_name: str | None) -> None:
+        """Mark entries as seen, optionally scoped to a single feed.
+
+        Args:
+            feed_name: The display name of the feed whose entries should be
+                marked as seen.  Pass ``None`` to mark entries across all feeds.
+        """
+        changed = False
+        for entry in self.entries:
+            in_scope = feed_name is None or self._feed_name_for(entry.feed_url) == feed_name
+            if in_scope and not entry.seen:
+                entry.seen = True
+                changed = True
+
+        if changed:
+            self._save_entries_store()
+            self._refresh_table()
+
+    def _mark_selected_seen(self) -> None:
+        """Mark the currently selected table rows as seen.
+
+        Resolves which :class:`~src.models.FeedEntry` objects correspond to the
+        selected row indices (accounting for the reversed display order and the
+        active filter) and marks each unseen one as seen before persisting.
+        """
+        current_filter = self._filter_combo.currentText()
+        filtered = self.entries
+        if current_filter != "All Feeds":
+            filtered = [
+                e for e in self.entries
+                if self._feed_name_for(e.feed_url) == current_filter
+            ]
+
+        reversed_filtered = list(reversed(filtered))
+        selected_rows = sorted({idx.row() for idx in self._entry_table.selectedIndexes()})
+
+        changed = False
+        for row in selected_rows:
+            if 0 <= row < len(reversed_filtered):
+                entry = reversed_filtered[row]
+                if not entry.seen:
+                    entry.seen = True
+                    changed = True
+
+        if changed:
+            self._save_entries_store()
+            self._refresh_table()
 
     def _on_remove_feed_clicked(self) -> None:
         """Emit remove_feed_requested with the indices of all selected feeds.
