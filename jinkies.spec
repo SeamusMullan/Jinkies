@@ -12,6 +12,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (f"sounds{separator}sounds",),
+        (f"assets{separator}assets",),
     ],
     hiddenimports=["feedparser"],
     hookspath=[],
