@@ -484,9 +484,11 @@ class JinkiesApp:
 
     def _save_state(self) -> None:
         """Persist the current state to disk."""
-        # Ensure any IDs added via the poller without a timestamp get one now
+        # Ensure any IDs added via the poller without a timestamp get one now.
+        # Iterate over a snapshot because the poller thread may add to
+        # ``self._seen_ids`` concurrently.
         now_iso = datetime.datetime.now(datetime.UTC).isoformat()
-        for entry_id in self._seen_ids:
+        for entry_id in set(self._seen_ids):
             self._seen_ids_timestamps.setdefault(entry_id, now_iso)
         self._state["seen_ids"] = self._seen_ids_timestamps
         save_state(self._state)
