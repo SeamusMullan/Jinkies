@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from src.config import load_config, load_state, save_config, save_state
@@ -144,22 +145,64 @@ class TestState:
         with caplog.at_level(logging.WARNING, logger="src.config"):
             state = load_state(tmp_config_dir)
         assert "seen_ids" in state
-        assert state["seen_ids"] == []
+        assert state["seen_ids"] == {}
         assert any("Corrupted" in m for m in caplog.messages)
 
     def test_load_state_missing_file(self, tmp_config_dir):
         state = load_state(tmp_config_dir)
         assert "seen_ids" in state
-        assert state["seen_ids"] == []
+        assert state["seen_ids"] == {}
 
-    def test_save_and_load_state(self, tmp_config_dir):
+    def test_save_and_load_state_dict_format(self, tmp_config_dir):
+        """Saving seen_ids as a dict (new format) round-trips correctly."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state = {"seen_ids": {"id1": now_iso, "id2": now_iso}}
+        save_state(state, tmp_config_dir)
+        loaded = load_state(tmp_config_dir)
+        assert set(loaded["seen_ids"].keys()) == {"id1", "id2"}
+
+    def test_load_state_backward_compat_list_format(self, tmp_config_dir):
+        """Old list format is migrated to dict with current timestamps."""
         state = {"seen_ids": ["id1", "id2", "id3"]}
         save_state(state, tmp_config_dir)
         loaded = load_state(tmp_config_dir)
-        assert loaded["seen_ids"] == ["id1", "id2", "id3"]
+        assert isinstance(loaded["seen_ids"], dict)
+        assert set(loaded["seen_ids"].keys()) == {"id1", "id2", "id3"}
+        # All timestamps should be recent (within the last minute)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=1)
+        for ts in loaded["seen_ids"].values():
+            assert datetime.fromisoformat(ts) >= cutoff
+
+    def test_load_state_prunes_old_entries(self, tmp_config_dir):
+        """Entries older than max_age_days are pruned on load."""
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
+        recent_ts = datetime.now(timezone.utc).isoformat()
+        state = {"seen_ids": {"old-id": old_ts, "new-id": recent_ts}}
+        save_state(state, tmp_config_dir)
+        loaded = load_state(tmp_config_dir, max_age_days=30)
+        assert "old-id" not in loaded["seen_ids"]
+        assert "new-id" in loaded["seen_ids"]
+
+    def test_load_state_keeps_entries_within_retention(self, tmp_config_dir):
+        """Entries within max_age_days are retained on load."""
+        recent_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        state = {"seen_ids": {"id1": recent_ts}}
+        save_state(state, tmp_config_dir)
+        loaded = load_state(tmp_config_dir, max_age_days=30)
+        assert "id1" in loaded["seen_ids"]
+
+    def test_load_state_entries_with_invalid_timestamps_skipped(self, tmp_config_dir):
+        """Entries with unparseable timestamps are silently dropped."""
+        good_ts = datetime.now(timezone.utc).isoformat()
+        state = {"seen_ids": {"bad-ts-id": "not-a-timestamp", "good-id": good_ts}}
+        save_state(state, tmp_config_dir)
+        loaded = load_state(tmp_config_dir)
+        assert "bad-ts-id" not in loaded["seen_ids"]
+        assert "good-id" in loaded["seen_ids"]
 
     def test_state_preserves_extra_fields(self, tmp_config_dir):
-        state = {"seen_ids": ["id1"], "errors_today": 5}
+        now_iso = datetime.now(timezone.utc).isoformat()
+        state = {"seen_ids": {"id1": now_iso}, "errors_today": 5}
         save_state(state, tmp_config_dir)
         loaded = load_state(tmp_config_dir)
         assert loaded["errors_today"] == 5

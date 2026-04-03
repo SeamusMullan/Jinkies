@@ -18,6 +18,9 @@ _POLL_INTERVAL_MIN: int = 1
 #: Minimum allowed value for :attr:`AppConfig.max_entries`.
 _MAX_ENTRIES_MIN: int = 1
 
+#: Minimum allowed value for :attr:`AppConfig.seen_ids_max_age_days`.
+_SEEN_IDS_MAX_AGE_MIN: int = 1
+
 #: Set of recognised values for :attr:`AppConfig.notification_style`.
 _VALID_NOTIFICATION_STYLES: frozenset[str] = frozenset({"native", "custom"})
 
@@ -155,6 +158,9 @@ class AppConfig:
         notification_style: Either "native" or "custom".
         max_entries: Maximum number of feed entries to keep in memory and on
             disk.  Oldest entries are evicted when the limit is exceeded.
+        seen_ids_max_age_days: Days after which a seen entry ID is pruned from
+            state.  Entries older than this may re-appear as new if they are
+            still present in the feed.
     """
 
     poll_interval_secs: int = 60
@@ -165,6 +171,7 @@ class AppConfig:
     })
     notification_style: str = "native"
     max_entries: int = 10_000
+    seen_ids_max_age_days: int = 30
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -178,6 +185,7 @@ class AppConfig:
             "sound_map": self.sound_map,
             "notification_style": self.notification_style,
             "max_entries": self.max_entries,
+            "seen_ids_max_age_days": self.seen_ids_max_age_days,
         }
 
     @classmethod
@@ -235,6 +243,17 @@ class AppConfig:
             )
             raw_max_entries = _MAX_ENTRIES_MIN
 
+        raw_max_age = data.get("seen_ids_max_age_days", 30)
+        if raw_max_age < _SEEN_IDS_MAX_AGE_MIN:
+            logger.warning(
+                "seen_ids_max_age_days value %r is below the minimum of %d; "
+                "clamping to %d.",
+                raw_max_age,
+                _SEEN_IDS_MAX_AGE_MIN,
+                _SEEN_IDS_MAX_AGE_MIN,
+            )
+            raw_max_age = _SEEN_IDS_MAX_AGE_MIN
+
         return cls(
             poll_interval_secs=raw_interval,
             feeds=[Feed.from_dict(f) for f in data.get("feeds", [])],
@@ -244,4 +263,5 @@ class AppConfig:
             }),
             notification_style=raw_style,
             max_entries=raw_max_entries,
+            seen_ids_max_age_days=raw_max_age,
         )

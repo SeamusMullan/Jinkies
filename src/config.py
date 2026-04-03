@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -164,19 +165,50 @@ def save_config(config: AppConfig, config_dir: Path | None = None) -> None:
     _write_json(config_dir / "config.json", config.to_dict())
 
 
-def load_state(config_dir: Path | None = None) -> dict[str, Any]:
+def load_state(config_dir: Path | None = None, max_age_days: int = 30) -> dict[str, Any]:
     """Load application state (seen entry IDs, stats) from disk.
+
+    Seen IDs older than ``max_age_days`` are pruned from the returned state.
+    The ``seen_ids`` value in the returned dict is always a mapping of
+    entry-id → ISO 8601 timestamp (when the entry was first seen).
+
+    For backward compatibility, if the persisted ``seen_ids`` is a plain list
+    of strings (written by an older version), each ID is treated as seen *now*
+    for the purpose of future pruning so they are retained for another
+    ``max_age_days`` days from this first upgrade.
 
     Args:
         config_dir: Override config directory (for testing).
+        max_age_days: IDs seen more than this many days ago are discarded.
 
     Returns:
-        State dictionary with 'seen_ids' list and optional stats.
+        State dictionary with 'seen_ids' dict (id → ISO timestamp) and
+        optional stats.
     """
     config_dir = config_dir or get_config_dir()
     data = _read_json(config_dir / "state.json")
-    if "seen_ids" not in data:
-        data["seen_ids"] = []
+    raw_seen = data.get("seen_ids", {})
+
+    if isinstance(raw_seen, list):
+        # Backward compat: old format was a plain list; treat all as seen now.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        raw_seen = {entry_id: now_iso for entry_id in raw_seen}
+
+    # Prune stale entries
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    pruned: dict[str, str] = {}
+    for entry_id, ts in raw_seen.items():
+        try:
+            seen_at = datetime.fromisoformat(ts)
+            # Make timezone-aware if naive (treat naive as UTC)
+            if seen_at.tzinfo is None:
+                seen_at = seen_at.replace(tzinfo=timezone.utc)
+            if seen_at >= cutoff:
+                pruned[entry_id] = ts
+        except (ValueError, TypeError):
+            pass  # Skip entries with invalid timestamps
+
+    data["seen_ids"] = pruned
     return data
 
 

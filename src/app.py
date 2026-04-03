@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import sys
+from datetime import timezone
 from pathlib import Path
 from typing import IO
 
@@ -157,8 +158,11 @@ class JinkiesApp:
 
         # Load config and state
         self.config = load_config()
-        self._state = load_state()
-        self._seen_ids: set[str] = set(self._state.get("seen_ids", []))
+        self._state = load_state(max_age_days=self.config.seen_ids_max_age_days)
+        # seen_ids in state is now a dict {entry_id: iso_timestamp}
+        seen_ids_dict: dict[str, str] = self._state.get("seen_ids", {})
+        self._seen_ids: set[str] = set(seen_ids_dict.keys())
+        self._seen_ids_timestamps: dict[str, str] = dict(seen_ids_dict)
 
         # Ensure default sounds exist
         ensure_default_sounds()
@@ -297,9 +301,11 @@ class JinkiesApp:
 
         self.notifier.notify("Jinkies!", f"{title}\n{body}")
 
-        # Update seen IDs
+        # Update seen IDs and record when each ID was first seen
+        now_iso = datetime.datetime.now(timezone.utc).isoformat()
         for entry in entries:
             self._seen_ids.add(entry.entry_id)
+            self._seen_ids_timestamps.setdefault(entry.entry_id, now_iso)
         self._save_state()
 
     def _on_feed_error(self, url: str, error: str) -> None:
@@ -479,7 +485,11 @@ class JinkiesApp:
 
     def _save_state(self) -> None:
         """Persist the current state to disk."""
-        self._state["seen_ids"] = list(self._seen_ids)
+        # Ensure any IDs added via the poller without a timestamp get one now
+        now_iso = datetime.datetime.now(timezone.utc).isoformat()
+        for entry_id in self._seen_ids:
+            self._seen_ids_timestamps.setdefault(entry_id, now_iso)
+        self._state["seen_ids"] = self._seen_ids_timestamps
         save_state(self._state)
 
     def _quit(self) -> None:
