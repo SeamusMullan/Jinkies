@@ -487,9 +487,27 @@ class JinkiesApp:
         # Ensure any IDs added via the poller without a timestamp get one now.
         # Iterate over a snapshot because the poller thread may add to
         # ``self._seen_ids`` concurrently.
-        now_iso = datetime.datetime.now(datetime.UTC).isoformat()
+        now = datetime.datetime.now(datetime.UTC)
+        now_iso = now.isoformat()
         for entry_id in set(self._seen_ids):
             self._seen_ids_timestamps.setdefault(entry_id, now_iso)
+
+        # Prune stale entries so memory and state.json don't grow without bound
+        # during long-running sessions (not just on the next restart).
+        cutoff = now - datetime.timedelta(days=self.config.seen_ids_max_age_days)
+        pruned: dict[str, str] = {}
+        for entry_id, ts in self._seen_ids_timestamps.items():
+            try:
+                seen_at = datetime.datetime.fromisoformat(ts)
+                if seen_at.tzinfo is None:
+                    seen_at = seen_at.replace(tzinfo=datetime.UTC)
+                if seen_at >= cutoff:
+                    pruned[entry_id] = ts
+            except (ValueError, TypeError):
+                pass  # Drop entries with invalid timestamps
+
+        self._seen_ids_timestamps = pruned
+        self._seen_ids.intersection_update(pruned)
         self._state["seen_ids"] = self._seen_ids_timestamps
         save_state(self._state)
 
