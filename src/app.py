@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import datetime
 import sys
-from datetime import timezone
 from pathlib import Path
 from typing import IO
 
@@ -302,7 +301,7 @@ class JinkiesApp:
         self.notifier.notify("Jinkies!", f"{title}\n{body}")
 
         # Update seen IDs and record when each ID was first seen
-        now_iso = datetime.datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.datetime.now(datetime.UTC).isoformat()
         for entry in entries:
             self._seen_ids.add(entry.entry_id)
             self._seen_ids_timestamps.setdefault(entry.entry_id, now_iso)
@@ -486,7 +485,7 @@ class JinkiesApp:
     def _save_state(self) -> None:
         """Persist the current state to disk."""
         # Ensure any IDs added via the poller without a timestamp get one now
-        now_iso = datetime.datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.datetime.now(datetime.UTC).isoformat()
         for entry_id in self._seen_ids:
             self._seen_ids_timestamps.setdefault(entry_id, now_iso)
         self._state["seen_ids"] = self._seen_ids_timestamps

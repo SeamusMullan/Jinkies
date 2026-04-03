@@ -12,7 +12,7 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -191,18 +191,18 @@ def load_state(config_dir: Path | None = None, max_age_days: int = 30) -> dict[s
 
     if isinstance(raw_seen, list):
         # Backward compat: old format was a plain list; treat all as seen now.
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         raw_seen = {entry_id: now_iso for entry_id in raw_seen}
 
     # Prune stale entries
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
     pruned: dict[str, str] = {}
     for entry_id, ts in raw_seen.items():
         try:
             seen_at = datetime.fromisoformat(ts)
             # Make timezone-aware if naive (treat naive as UTC)
             if seen_at.tzinfo is None:
-                seen_at = seen_at.replace(tzinfo=timezone.utc)
+                seen_at = seen_at.replace(tzinfo=UTC)
             if seen_at >= cutoff:
                 pruned[entry_id] = ts
         except (ValueError, TypeError):
