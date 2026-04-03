@@ -193,6 +193,13 @@ def load_state(config_dir: Path | None = None, max_age_days: int = 30) -> dict[s
         # Backward compat: old format was a plain list; treat all as seen now.
         now_iso = datetime.now(UTC).isoformat()
         raw_seen = {entry_id: now_iso for entry_id in raw_seen}
+    elif not isinstance(raw_seen, dict):
+        # Unexpected type (e.g. null, string) — reset to empty and warn.
+        logger.warning(
+            "Unexpected type for seen_ids in state.json (%s); resetting to empty.",
+            type(raw_seen).__name__,
+        )
+        raw_seen = {}
 
     # Prune stale entries
     cutoff = datetime.now(UTC) - timedelta(days=max_age_days)

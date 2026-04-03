@@ -200,6 +200,16 @@ class TestState:
         assert "bad-ts-id" not in loaded["seen_ids"]
         assert "good-id" in loaded["seen_ids"]
 
+    def test_load_state_invalid_seen_ids_type_reset_to_empty(self, tmp_config_dir):
+        """Unexpected seen_ids types (null, string, int) are reset to empty dict."""
+        import json
+
+        state_file = tmp_config_dir / "state.json"
+        for bad_value in [None, "string", 42]:
+            state_file.write_text(json.dumps({"seen_ids": bad_value}))
+            loaded = load_state(tmp_config_dir)
+            assert loaded["seen_ids"] == {}, f"Expected empty dict for seen_ids={bad_value!r}"
+
     def test_state_preserves_extra_fields(self, tmp_config_dir):
         now_iso = datetime.now(UTC).isoformat()
         state = {"seen_ids": {"id1": now_iso}, "errors_today": 5}
