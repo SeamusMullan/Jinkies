@@ -267,6 +267,200 @@ class TestFeedPollerAuth:
         assert kwargs["socket_timeout"] > 0
 
 
+class TestFeedPollerETag:
+    """Tests for ETag/Last-Modified conditional-GET support."""
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_etag_passed_to_feedparser(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """feedparser.parse should receive the feed's stored etag."""
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Feed", etag='"abc123"')
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        _, kwargs = mock_parse.call_args
+        assert kwargs.get("etag") == '"abc123"'
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_modified_passed_to_feedparser(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """feedparser.parse should receive the feed's stored modified date."""
+        mock_parse.return_value = mock_feedparser_result
+        modified = "Tue, 03 Jun 2003 00:00:00 GMT"
+        feed = Feed(url="https://example.com/feed.atom", name="Feed", modified=modified)
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        _, kwargs = mock_parse.call_args
+        assert kwargs.get("modified") == modified
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_etag_stored_on_feed_after_successful_parse(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """After a successful parse the feed's etag must be updated."""
+        mock_feedparser_result.etag = '"newetag"'
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Feed")
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        assert feed.etag == '"newetag"'
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_modified_stored_on_feed_after_successful_parse(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """After a successful parse the feed's modified must be updated."""
+        last_mod = "Wed, 04 Jun 2003 00:00:00 GMT"
+        mock_feedparser_result.modified = last_mod
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Feed")
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        assert feed.modified == last_mod
+
+    @patch("src.feed_poller.get_credentials", return_value=None)
+    @patch("src.feed_poller.feedparser.parse")
+    def test_no_etag_in_response_leaves_existing_etag_unchanged(
+        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+    ):
+        """If the server does not return an ETag the existing value is kept."""
+        del mock_feedparser_result.etag  # ensure attribute is absent
+        mock_parse.return_value = mock_feedparser_result
+        feed = Feed(url="https://example.com/feed.atom", name="Feed", etag='"kept"')
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        assert feed.etag == '"kept"'
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_path_sends_if_none_match_header(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """Authenticated fetch must include If-None-Match when etag is set."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.headers.get = lambda h, default=None: {
+            "ETag": '"newetag"',
+        }.get(h, default)
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure", etag='"oldtag"')
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        req = mock_urlopen.call_args[0][0]
+        assert req.get_header("If-none-match") == '"oldtag"'
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_path_sends_if_modified_since_header(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """Authenticated fetch must include If-Modified-Since when modified is set."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.headers.get = lambda h, default=None: None
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        modified = "Tue, 03 Jun 2003 00:00:00 GMT"
+        feed = Feed(url="https://secure.example.com/feed", name="Secure", modified=modified)
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        req = mock_urlopen.call_args[0][0]
+        assert req.get_header("If-modified-since") == modified
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_path_updates_etag_from_response(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """Authenticated fetch must update feed.etag from the ETag response header."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.headers.get = lambda h, default=None: {
+            "ETag": '"newetag456"',
+        }.get(h, default)
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._fetch_feed(feed)
+
+        assert feed.etag == '"newetag456"'
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token"))
+    def test_auth_path_304_returns_empty_result(
+        self, _mock_creds, mock_urlopen, qtbot,
+    ):
+        """A 304 Not Modified response in the auth path must return an empty result."""
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://secure.example.com/feed",
+            code=304,
+            msg="Not Modified",
+            hdrs=MagicMock(),
+            fp=None,
+        )
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        result = poller._fetch_feed(feed)
+
+        # Should get an empty result (no entries), not an exception
+        assert result.entries == []
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token"))
+    def test_auth_path_non_304_http_error_propagates(
+        self, _mock_creds, mock_urlopen, qtbot,
+    ):
+        """Non-304 HTTP errors in the auth path must propagate normally."""
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="https://secure.example.com/feed",
+            code=503,
+            msg="Service Unavailable",
+            hdrs=MagicMock(),
+            fp=None,
+        )
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+
+        errors = []
+        poller.feed_error.connect(lambda url, msg: errors.append((url, msg)))
+        poller._poll_feed(feed)
+
+        assert len(errors) == 1
+
+
 def _make_entry(data: dict) -> MagicMock:
     """Helper: create a mock feedparser entry whose .get() mirrors *data*."""
     entry = MagicMock()

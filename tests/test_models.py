@@ -16,6 +16,24 @@ class TestFeed:
         assert d["sound_file"] is None
         assert d["last_poll_time"] is None
 
+    def test_to_dict_includes_etag_and_modified(self):
+        """to_dict must include etag and modified for persistence."""
+        feed = Feed(
+            url="https://example.com/feed",
+            name="Feed",
+            etag='"abc123"',
+            modified="Tue, 03 Jun 2003 00:00:00 GMT",
+        )
+        d = feed.to_dict()
+        assert d["etag"] == '"abc123"'
+        assert d["modified"] == "Tue, 03 Jun 2003 00:00:00 GMT"
+
+    def test_to_dict_etag_and_modified_none_by_default(self, sample_feed):
+        """to_dict must include etag and modified as None when not set."""
+        d = sample_feed.to_dict()
+        assert d["etag"] is None
+        assert d["modified"] is None
+
     def test_to_dict_no_plaintext_credentials(self):
         """to_dict must never include auth_user or auth_token."""
         feed = Feed(
@@ -52,6 +70,20 @@ class TestFeed:
         feed = Feed.from_dict(data)
         assert feed.enabled is True
         assert feed.sound_file is None
+        assert feed.etag is None
+        assert feed.modified is None
+
+    def test_from_dict_reads_etag_and_modified(self):
+        """from_dict should deserialize etag and modified."""
+        data = {
+            "url": "https://test.com/feed",
+            "name": "Test",
+            "etag": '"abc"',
+            "modified": "Mon, 01 Jan 2024 00:00:00 GMT",
+        }
+        feed = Feed.from_dict(data)
+        assert feed.etag == '"abc"'
+        assert feed.modified == "Mon, 01 Jan 2024 00:00:00 GMT"
 
     def test_from_dict_legacy_plaintext_credentials(self):
         """from_dict should still read legacy auth_user/auth_token for migration."""
