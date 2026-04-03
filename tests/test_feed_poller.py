@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import urllib.error
+import urllib.request
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -265,6 +268,136 @@ class TestFeedPollerAuth:
         _, kwargs = mock_parse.call_args
         assert "socket_timeout" in kwargs, "feedparser.parse must be called with socket_timeout"
         assert kwargs["socket_timeout"] > 0
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("alice", "secret"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_urlopen_called_with_request_object(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """urlopen must receive a urllib.request.Request (not a bare URL string)."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        mock_urlopen.assert_called_once()
+        req = mock_urlopen.call_args[0][0]
+        assert isinstance(req, urllib.request.Request)
+        assert req.full_url == feed.url
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("alice", "secret"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_authorization_header_name_and_scheme(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """The Request must carry an 'Authorization' header with the 'Basic' scheme."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        req = mock_urlopen.call_args[0][0]
+        auth_header = req.get_header("Authorization")
+        assert auth_header is not None, "Authorization header must be set"
+        assert auth_header.startswith("Basic "), "Authorization header must use the Basic scheme"
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("alice", "secret"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_header_base64_encodes_username_colon_token(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """The Basic credential must be base64('username:token'), not any other encoding."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        req = mock_urlopen.call_args[0][0]
+        auth_header = req.get_header("Authorization")
+        expected_b64 = base64.b64encode(b"alice:secret").decode()
+        assert auth_header == f"Basic {expected_b64}"
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token123"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_urlopen_called_with_30s_timeout(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """urlopen must be called with timeout=30 to prevent indefinite blocking."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<feed/>"
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        _, kwargs = mock_urlopen.call_args
+        assert kwargs.get("timeout") == 30
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token123"))
+    @patch("src.feed_poller.feedparser.parse")
+    def test_auth_urlopen_response_content_passed_to_feedparser(
+        self, mock_parse, _mock_creds, mock_urlopen, mock_feedparser_result, qtbot,
+    ):
+        """feedparser.parse must receive the raw bytes read from the urlopen response."""
+        raw_content = b"<feed><entry><title>Hello</title></entry></feed>"
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = raw_content
+        mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        mock_parse.return_value = mock_feedparser_result
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+        poller._poll_feed(feed)
+
+        mock_parse.assert_called_once_with(raw_content)
+
+    @patch("src.feed_poller.urllib.request.urlopen")
+    @patch("src.feed_poller.get_credentials", return_value=("user", "token123"))
+    def test_auth_urlopen_url_error_emits_feed_error(
+        self, _mock_creds, mock_urlopen, qtbot,
+    ):
+        """A urllib.error.URLError raised by urlopen must be caught and emitted as feed_error."""
+        mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
+
+        feed = Feed(url="https://secure.example.com/feed", name="Secure")
+        poller = FeedPoller(feeds=[feed])
+
+        errors = []
+        poller.feed_error.connect(lambda url, msg: errors.append((url, msg)))
+        poller._poll_feed(feed)
+
+        assert len(errors) == 1
+        assert errors[0][0] == feed.url
+        assert "Connection refused" in errors[0][1]
 
 
 def _make_entry(data: dict) -> MagicMock:
