@@ -221,3 +221,38 @@ class TestAppConfig:
             config = AppConfig.from_dict({"max_entries": -100})
         assert config.max_entries == 1
         assert "max_entries" in caplog.text
+
+    def test_default_seen_ids_max_age_days(self):
+        """AppConfig should default seen_ids_max_age_days to 30."""
+        config = AppConfig()
+        assert config.seen_ids_max_age_days == 30
+
+    def test_to_dict_includes_seen_ids_max_age_days(self):
+        """to_dict should include seen_ids_max_age_days."""
+        config = AppConfig(seen_ids_max_age_days=60)
+        d = config.to_dict()
+        assert d["seen_ids_max_age_days"] == 60
+
+    def test_from_dict_seen_ids_max_age_days(self):
+        """from_dict should read seen_ids_max_age_days from the data."""
+        config = AppConfig.from_dict({"seen_ids_max_age_days": 90})
+        assert config.seen_ids_max_age_days == 90
+
+    def test_from_dict_seen_ids_max_age_days_default_when_absent(self):
+        """from_dict should default seen_ids_max_age_days to 30 when absent."""
+        config = AppConfig.from_dict({})
+        assert config.seen_ids_max_age_days == 30
+
+    def test_from_dict_seen_ids_max_age_days_zero_clamped(self, caplog):
+        """seen_ids_max_age_days of 0 should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"seen_ids_max_age_days": 0})
+        assert config.seen_ids_max_age_days == 1
+        assert "seen_ids_max_age_days" in caplog.text
+
+    def test_from_dict_seen_ids_max_age_days_negative_clamped(self, caplog):
+        """Negative seen_ids_max_age_days should be clamped to 1 with a warning."""
+        with caplog.at_level(logging.WARNING, logger="src.models"):
+            config = AppConfig.from_dict({"seen_ids_max_age_days": -5})
+        assert config.seen_ids_max_age_days == 1
+        assert "seen_ids_max_age_days" in caplog.text
