@@ -277,6 +277,14 @@ class FeedPoller(QThread):
         that a slow or unresponsive server cannot block the poller thread
         indefinitely and prevent a clean application shutdown.
 
+        Conditional GET support: if the feed has a cached ``etag`` or
+        ``modified`` value from a previous poll, these are sent as
+        ``If-None-Match`` / ``If-Modified-Since`` request headers so that
+        the server can reply with HTTP 304 (Not Modified) when the feed
+        content has not changed, avoiding a full re-download.  On a
+        successful response the values are stored back onto the feed object
+        for use in the next poll.
+
         Args:
             feed: The feed to fetch.
 
@@ -302,16 +310,49 @@ class FeedPoller(QThread):
             username, token = creds
             credentials = f"{username}:{token}"
             b64 = base64.b64encode(credentials.encode()).decode()
+            headers: dict[str, str] = {"Authorization": f"Basic {b64}"}
+            if feed.etag:
+                headers["If-None-Match"] = feed.etag
+            if feed.modified:
+                headers["If-Modified-Since"] = feed.modified
             req = urllib.request.Request(  # noqa: S310
                 feed.url,
-                headers={"Authorization": f"Basic {b64}"},
+                headers=headers,
             )
-            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
-                content = resp.read()
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310
+                    content = resp.read()
+                    etag = resp.headers.get("ETag")
+                    last_modified = resp.headers.get("Last-Modified")
+            except urllib.error.HTTPError as exc:
+                if exc.code == 304:
+                    # Server says content has not changed; return an empty
+                    # result so the poller skips entry processing.
+                    return feedparser.parse("")
+                raise
+            if etag:
+                feed.etag = etag
+            if last_modified:
+                feed.modified = last_modified
             return feedparser.parse(content)
+
         # Use socket_timeout so a slow or unresponsive server cannot block
         # the poller thread indefinitely and prevent clean shutdown.
-        return feedparser.parse(feed.url, socket_timeout=30)
+        # Pass etag/modified so feedparser sends conditional-GET headers and
+        # the server can respond with 304 when nothing has changed.
+        parsed = feedparser.parse(
+            feed.url,
+            socket_timeout=30,
+            etag=feed.etag,
+            modified=feed.modified,
+        )
+        etag = getattr(parsed, "etag", None)
+        modified = getattr(parsed, "modified", None)
+        if etag:
+            feed.etag = etag
+        if modified:
+            feed.modified = modified
+        return parsed
 
     def _interruptible_sleep(self, seconds: int) -> None:
         """Sleep in small increments to allow quick shutdown.

@@ -34,6 +34,12 @@ class Feed:
         last_poll_time: ISO 8601 timestamp of last successful poll.
         auth_user: Optional username for HTTP Basic authentication.
         auth_token: Optional API token/password for HTTP Basic authentication.
+        etag: HTTP ETag header value from the last successful poll, used
+            to send conditional ``If-None-Match`` requests and avoid
+            re-downloading unchanged feeds.
+        modified: HTTP Last-Modified header value (RFC 7231 date string)
+            from the last successful poll, used to send conditional
+            ``If-Modified-Since`` requests.
     """
 
     url: str
@@ -43,6 +49,8 @@ class Feed:
     last_poll_time: str | None = None
     auth_user: str | None = None
     auth_token: str | None = None
+    etag: str | None = None
+    modified: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -61,6 +69,8 @@ class Feed:
             "sound_file": self.sound_file,
             "last_poll_time": self.last_poll_time,
             "has_auth": bool(self.auth_user and self.auth_token),
+            "etag": self.etag,
+            "modified": self.modified,
         }
 
     @classmethod
@@ -86,6 +96,8 @@ class Feed:
             last_poll_time=data.get("last_poll_time"),
             auth_user=data.get("auth_user"),
             auth_token=data.get("auth_token"),
+            etag=data.get("etag"),
+            modified=data.get("modified"),
         )
 
 
