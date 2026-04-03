@@ -285,6 +285,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
+      - name: Run Linter
+        run: uv run ruff check src tests
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest
+
       - name: Build
         run: |
           chmod +x scripts/build_macos.sh
@@ -318,6 +326,14 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --dev
+
+      - name: Run Linter
+        run: uv run ruff check src tests
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run pytest
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
