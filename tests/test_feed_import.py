@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import feedparser
 import pytest
 
-from src.feed_import import import_local_feed, import_opml
+from src.feed_import import (
+    _build_feed_url,
+    _extract_job_feeds,
+    import_local_feed,
+    import_opml,
+)
 
 SAMPLE_OPML = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -247,3 +253,127 @@ class TestImportJenkinsFeed:
         atom_file.write_text(SAMPLE_JENKINS_ATOM)
         feeds = import_local_feed(atom_file)
         assert feeds[0].url == "http://localhost:8080/rssAll"
+
+
+# ---------------------------------------------------------------------------
+# Minimal feed XML helpers used by the unit tests below
+# ---------------------------------------------------------------------------
+
+_ATOM_WITH_ALTERNATE = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Test Feed</title>
+  <link href="{base_url}/" rel="alternate" type="text/html"/>
+</feed>
+"""
+
+_ATOM_NO_LINKS = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Test Feed</title>
+</feed>
+"""
+
+
+class TestBuildFeedUrlEdgeCases:
+    """Edge-case tests for _build_feed_url."""
+
+    def test_empty_base_url_falls_back_to_path(self, tmp_path):
+        """When base_url is empty and there is no self link, return str(path)."""
+        path = tmp_path / "feed.atom"
+        parsed = feedparser.parse(_ATOM_NO_LINKS)
+        result = _build_feed_url(parsed, "", path)
+        assert result == str(path)
+
+    @pytest.mark.parametrize("stem", ["rssAll", "rssLatest", "rssFailed"])
+    def test_known_jenkins_stem_with_base_url(self, tmp_path, stem):
+        """Known Jenkins stems are appended to base_url."""
+        base_url = "http://ci.example.com"
+        path = tmp_path / f"{stem}.atom"
+        parsed = feedparser.parse(_ATOM_WITH_ALTERNATE.format(base_url=base_url))
+        result = _build_feed_url(parsed, base_url, path)
+        assert result == f"{base_url}/{stem}"
+
+    def test_unknown_stem_with_base_url(self, tmp_path):
+        """An unrecognised stem is still appended to base_url."""
+        base_url = "http://ci.example.com"
+        path = tmp_path / "custom.atom"
+        parsed = feedparser.parse(_ATOM_WITH_ALTERNATE.format(base_url=base_url))
+        result = _build_feed_url(parsed, base_url, path)
+        assert result == f"{base_url}/custom"
+
+
+class TestExtractJobFeedsEdgeCases:
+    """Edge-case tests for _extract_job_feeds."""
+
+    def test_empty_base_url_returns_empty(self):
+        """No base_url → no job feeds regardless of entry links."""
+        parsed = feedparser.parse(SAMPLE_JENKINS_ATOM)
+        assert _extract_job_feeds(parsed, "") == []
+
+    @pytest.mark.parametrize("link", [
+        "http://localhost:8080/view/All/",
+        "http://localhost:8080/",
+        "",
+    ])
+    def test_entries_without_job_segment_are_skipped(self, link):
+        """Entries whose links contain no '/job/' path segment produce no feeds."""
+        xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Jenkins:All</title>
+  <link rel="alternate" href="http://localhost:8080/" type="text/html"/>
+  <entry>
+    <title>Some Build #1</title>
+    <link rel="alternate" href="{link}" type="text/html"/>
+    <id>urn:uuid:1</id>
+  </entry>
+</feed>
+"""
+        parsed = feedparser.parse(xml)
+        assert _extract_job_feeds(parsed, "http://localhost:8080") == []
+
+    def test_entry_link_not_prefixed_by_base_url_is_skipped(self):
+        """Links from a different server are not mistakenly added.
+
+        When removeprefix has no effect the path components do not start
+        with 'job', so the entry is silently ignored.
+        """
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Jenkins:All</title>
+  <link rel="alternate" href="http://localhost:8080/" type="text/html"/>
+  <entry>
+    <title>Other &raquo; Job #1</title>
+    <link rel="alternate" href="http://other-server:9090/job/Other/1/"
+          type="text/html"/>
+    <id>urn:uuid:1</id>
+  </entry>
+</feed>
+"""
+        parsed = feedparser.parse(xml)
+        assert _extract_job_feeds(parsed, "http://localhost:8080") == []
+
+    def test_deeply_nested_job_path(self):
+        """Three-level deep job hierarchy is extracted as a single Feed."""
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Jenkins:All</title>
+  <link rel="alternate" href="http://localhost:8080/" type="text/html"/>
+  <entry>
+    <title>Org &raquo; Team &raquo; Project #7</title>
+    <link rel="alternate"
+          href="http://localhost:8080/job/Org/job/Team/job/Project/7/"
+          type="text/html"/>
+    <id>urn:uuid:1</id>
+  </entry>
+</feed>
+"""
+        parsed = feedparser.parse(xml)
+        result = _extract_job_feeds(parsed, "http://localhost:8080")
+        assert len(result) == 1
+        assert result[0].url == (
+            "http://localhost:8080/job/Org/job/Team/job/Project/rssAll"
+        )
