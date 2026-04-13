@@ -91,24 +91,35 @@ class AudioPlayer:
         self.sounds_dir = sounds_dir or get_sounds_dir()
         self._effects: dict[str, QSoundEffect] = {}
 
-    def play(self, event_type: str) -> None:
+    def play(self, event_type: str, sound_file: str | None = None) -> None:
         """Play the sound associated with an event type.
+
+        When *sound_file* is provided it is used as-is (absolute path),
+        bypassing the global ``sound_map``.  This allows per-feed custom
+        sounds to override the default mapping.
 
         Args:
             event_type: The event type key (e.g. "new_entry", "error").
+            sound_file: Optional absolute path to a WAV file that overrides
+                the ``sound_map`` entry for this event.
         """
-        filename = self.sound_map.get(event_type)
-        if not filename:
-            return
+        if sound_file:
+            path = Path(sound_file)
+            cache_key = sound_file
+        else:
+            filename = self.sound_map.get(event_type)
+            if not filename:
+                return
+            path = self.sounds_dir / filename
+            cache_key = event_type
 
-        path = self.sounds_dir / filename
         if not path.exists():
             return
 
-        if event_type not in self._effects:
+        if cache_key not in self._effects:
             effect = QSoundEffect()
             effect.setSource(QUrl.fromLocalFile(str(path)))
             effect.setVolume(0.7)
-            self._effects[event_type] = effect
+            self._effects[cache_key] = effect
 
-        self._effects[event_type].play()
+        self._effects[cache_key].play()

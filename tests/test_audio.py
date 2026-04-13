@@ -54,3 +54,35 @@ class TestAudioPlayer:
         player = AudioPlayer({"test": "missing.wav"}, sounds_dir=tmp_sounds_dir)
         # Should not raise
         player.play("test")
+
+    def test_play_sound_file_override_missing(self, tmp_sounds_dir):
+        """play() with a non-existent sound_file override should not raise."""
+        player = AudioPlayer({}, sounds_dir=tmp_sounds_dir)
+        # Should not raise even when the override path does not exist
+        player.play("new_entry", sound_file="/nonexistent/custom.wav")
+
+    def test_play_sound_file_override_used(self, tmp_sounds_dir):
+        """play() uses sound_file override instead of sound_map when provided."""
+        custom_wav = tmp_sounds_dir / "custom.wav"
+        generate_wav(custom_wav, frequency=880.0, duration=0.1)
+
+        # Empty sound_map – would normally produce no sound
+        player = AudioPlayer({}, sounds_dir=tmp_sounds_dir)
+        # Should not raise; the override file exists so it should be loaded
+        player.play("new_entry", sound_file=str(custom_wav))
+        assert str(custom_wav) in player._effects
+
+    def test_play_sound_file_override_cached_separately(self, tmp_sounds_dir):
+        """The override path and the event-type key use separate cache slots."""
+        default_wav = tmp_sounds_dir / "new_entry.wav"
+        custom_wav = tmp_sounds_dir / "custom.wav"
+        generate_wav(default_wav, frequency=440.0, duration=0.1)
+        generate_wav(custom_wav, frequency=880.0, duration=0.1)
+
+        player = AudioPlayer({"new_entry": "new_entry.wav"}, sounds_dir=tmp_sounds_dir)
+        player.play("new_entry")
+        player.play("new_entry", sound_file=str(custom_wav))
+
+        # Both cache slots must be populated independently
+        assert "new_entry" in player._effects
+        assert str(custom_wav) in player._effects
