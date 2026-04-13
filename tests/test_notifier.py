@@ -36,11 +36,10 @@ class TestNotificationDialog:
         dlg = NotificationDialog("Title", "Body", timeout_ms=60000)
         qtbot.addWidget(dlg)
         screen = QGuiApplication.primaryScreen()
-        if screen:
-            geo = screen.availableGeometry()
-            pos = dlg.pos()
-            assert pos.x() < geo.right()
-            assert pos.y() < geo.bottom()
+        if screen is None:
+            pytest.skip("No primary screen available to validate dialog geometry")
+        geo = screen.availableGeometry()
+        assert geo.contains(dlg.geometry())
 
     def test_position_stacked_above_previous(self, qtbot):
         dlg1 = NotificationDialog("T1", "B1", timeout_ms=60000)
