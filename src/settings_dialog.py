@@ -76,6 +76,16 @@ class SettingsDialog(QDialog):
         poll_group.setLayout(poll_layout)
         layout.addWidget(poll_group)
 
+        # Entry table display
+        display_group = QGroupBox("Display")
+        display_layout = QFormLayout()
+        self._page_size_spinner = QSpinBox()
+        self._page_size_spinner.setRange(1, 10_000)
+        self._page_size_spinner.setSuffix(" entries")
+        display_layout.addRow("Page size:", self._page_size_spinner)
+        display_group.setLayout(display_layout)
+        layout.addWidget(display_group)
+
         # Sounds
         sound_group = QGroupBox("Sounds")
         sound_layout = QFormLayout()
@@ -150,6 +160,7 @@ class SettingsDialog(QDialog):
     def _load_values(self) -> None:
         """Populate UI fields from the current config."""
         self._interval_spinner.setValue(self.config.poll_interval_secs)
+        self._page_size_spinner.setValue(self.config.page_size)
         self._new_entry_sound.setText(self.config.sound_map.get("new_entry", ""))
         self._error_sound.setText(self.config.sound_map.get("error", ""))
         self._notif_style.setCurrentText(self.config.notification_style)
@@ -299,6 +310,7 @@ class SettingsDialog(QDialog):
     def _save_and_accept(self) -> None:
         """Save settings to config and close."""
         self.config.poll_interval_secs = self._interval_spinner.value()
+        self.config.page_size = self._page_size_spinner.value()
         self.config.sound_map["new_entry"] = self._new_entry_sound.text()
         self.config.sound_map["error"] = self._error_sound.text()
         self.config.notification_style = self._notif_style.currentText()

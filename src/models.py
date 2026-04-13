@@ -21,6 +21,9 @@ _MAX_ENTRIES_MIN: int = 1
 #: Minimum allowed value for :attr:`AppConfig.seen_ids_max_age_days`.
 _SEEN_IDS_MAX_AGE_MIN: int = 1
 
+#: Minimum allowed value for :attr:`AppConfig.page_size`.
+_PAGE_SIZE_MIN: int = 1
+
 #: Set of recognised values for :attr:`AppConfig.notification_style`.
 _VALID_NOTIFICATION_STYLES: frozenset[str] = frozenset({"native", "custom"})
 
@@ -173,6 +176,7 @@ class AppConfig:
         seen_ids_max_age_days: Days after which a seen entry ID is pruned from
             state.  Entries older than this may re-appear as new if they are
             still present in the feed.
+        page_size: Number of entries to show per page in the entry table.
     """
 
     poll_interval_secs: int = 60
@@ -184,6 +188,7 @@ class AppConfig:
     notification_style: str = "native"
     max_entries: int = 10_000
     seen_ids_max_age_days: int = 30
+    page_size: int = 100
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -198,6 +203,7 @@ class AppConfig:
             "notification_style": self.notification_style,
             "max_entries": self.max_entries,
             "seen_ids_max_age_days": self.seen_ids_max_age_days,
+            "page_size": self.page_size,
         }
 
     @classmethod
@@ -266,6 +272,17 @@ class AppConfig:
             )
             raw_max_age = _SEEN_IDS_MAX_AGE_MIN
 
+        raw_page_size = data.get("page_size", 100)
+        if raw_page_size < _PAGE_SIZE_MIN:
+            logger.warning(
+                "page_size value %r is below the minimum of %d; "
+                "clamping to %d.",
+                raw_page_size,
+                _PAGE_SIZE_MIN,
+                _PAGE_SIZE_MIN,
+            )
+            raw_page_size = _PAGE_SIZE_MIN
+
         return cls(
             poll_interval_secs=raw_interval,
             feeds=[Feed.from_dict(f) for f in data.get("feeds", [])],
@@ -276,4 +293,5 @@ class AppConfig:
             notification_style=raw_style,
             max_entries=raw_max_entries,
             seen_ids_max_age_days=raw_max_age,
+            page_size=raw_page_size,
         )

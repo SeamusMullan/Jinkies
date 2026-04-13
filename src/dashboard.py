@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QTableWidget,
@@ -53,6 +54,7 @@ class Dashboard(QMainWindow):
         entries: List of currently displayed FeedEntry objects.
         max_entries: Maximum number of entries to keep; oldest are evicted when
             this limit is exceeded.
+        page_size: Number of entries shown per page in the entry table.
     """
 
     add_feed_requested = Signal()
@@ -72,6 +74,8 @@ class Dashboard(QMainWindow):
         self.setMinimumSize(800, 500)
         self.entries: list[FeedEntry] = []
         self.max_entries: int = 10_000
+        self.page_size: int = 100
+        self._current_page: int = 0
 
         # Create store at default location if it doesnt exist
         self._entries_store_location = get_config_dir() / "store.json"
@@ -225,6 +229,23 @@ class Dashboard(QMainWindow):
         splitter.setSizes([200, 600])
         layout.addWidget(splitter)
 
+        # Pagination controls (shown only when entries exceed page_size)
+        pagination_layout = QHBoxLayout()
+        pagination_layout.addStretch()
+        self._prev_page_btn = QPushButton("← Prev")
+        self._prev_page_btn.clicked.connect(self._on_prev_page)
+        pagination_layout.addWidget(self._prev_page_btn)
+        self._page_label = QLabel("Page 1 of 1")
+        pagination_layout.addWidget(self._page_label)
+        self._next_page_btn = QPushButton("Next →")
+        self._next_page_btn.clicked.connect(self._on_next_page)
+        pagination_layout.addWidget(self._next_page_btn)
+        pagination_layout.addStretch()
+        self._pagination_widget = QWidget()
+        self._pagination_widget.setLayout(pagination_layout)
+        self._pagination_widget.setVisible(False)
+        layout.addWidget(self._pagination_widget)
+
     def _setup_statusbar(self) -> None:
         """Create the status bar with stats display."""
         self._statusbar = QStatusBar()
@@ -274,7 +295,7 @@ class Dashboard(QMainWindow):
         self._save_entries_store()
 
     def _refresh_table(self) -> None:
-        """Rebuild the entry table from current entries and filter."""
+        """Rebuild the entry table from current entries, filter, and current page."""
         current_filter = self._filter_combo.currentText()
         filtered = self.entries
         if current_filter != "All Feeds":
@@ -283,9 +304,19 @@ class Dashboard(QMainWindow):
                 if self._feed_name_for(e.feed_url) == current_filter
             ]
 
+        reversed_filtered = list(reversed(filtered))
+        total = len(reversed_filtered)
+        total_pages = max(1, -(-total // self.page_size))  # ceiling division
+
+        # Clamp current page to valid range
+        self._current_page = max(0, min(self._current_page, total_pages - 1))
+
+        page_offset = self._current_page * self.page_size
+        page_entries = reversed_filtered[page_offset: page_offset + self.page_size]
+
         self._entry_table.setSortingEnabled(False)
-        self._entry_table.setRowCount(len(filtered))
-        for row, entry in enumerate(reversed(filtered)):
+        self._entry_table.setRowCount(len(page_entries))
+        for row, entry in enumerate(page_entries):
             self._entry_table.setItem(row, 0, QTableWidgetItem(entry.title))
             self._entry_table.setItem(
                 row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
@@ -294,6 +325,14 @@ class Dashboard(QMainWindow):
             status = "Seen" if entry.seen else "New"
             self._entry_table.setItem(row, 3, QTableWidgetItem(status))
         self._entry_table.setSortingEnabled(True)
+
+        # Update pagination controls
+        show_pagination = total > self.page_size
+        self._pagination_widget.setVisible(show_pagination)
+        if show_pagination:
+            self._page_label.setText(f"Page {self._current_page + 1} of {total_pages}")
+            self._prev_page_btn.setEnabled(self._current_page > 0)
+            self._next_page_btn.setEnabled(self._current_page < total_pages - 1)
 
     def _feed_name_for(self, url: str) -> str:
         """Look up a feed's display name by URL.
@@ -425,6 +464,18 @@ class Dashboard(QMainWindow):
         Args:
             _text: The selected filter text (unused directly).
         """
+        self._current_page = 0
+        self._refresh_table()
+
+    def _on_prev_page(self) -> None:
+        """Navigate to the previous page of entries."""
+        if self._current_page > 0:
+            self._current_page -= 1
+            self._refresh_table()
+
+    def _on_next_page(self) -> None:
+        """Navigate to the next page of entries."""
+        self._current_page += 1
         self._refresh_table()
 
     def _on_entry_double_click(self, index: object) -> None:
@@ -447,8 +498,9 @@ class Dashboard(QMainWindow):
             ]
 
         reversed_filtered = list(reversed(filtered))
-        if 0 <= row < len(reversed_filtered):
-            entry = reversed_filtered[row]
+        actual_index = self._current_page * self.page_size + row
+        if 0 <= actual_index < len(reversed_filtered):
+            entry = reversed_filtered[actual_index]
             if entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
                 from PySide6.QtCore import QUrl
 
@@ -531,8 +583,9 @@ class Dashboard(QMainWindow):
         """Mark the currently selected table rows as seen.
 
         Resolves which :class:`~src.models.FeedEntry` objects correspond to the
-        selected row indices (accounting for the reversed display order and the
-        active filter) and marks each unseen one as seen before persisting.
+        selected row indices (accounting for the reversed display order, the
+        active filter, and the current page offset) and marks each unseen one
+        as seen before persisting.
         """
         current_filter = self._filter_combo.currentText()
         filtered = self.entries
@@ -543,12 +596,14 @@ class Dashboard(QMainWindow):
             ]
 
         reversed_filtered = list(reversed(filtered))
+        page_offset = self._current_page * self.page_size
         selected_rows = sorted({idx.row() for idx in self._entry_table.selectedIndexes()})
 
         changed = False
         for row in selected_rows:
-            if 0 <= row < len(reversed_filtered):
-                entry = reversed_filtered[row]
+            actual_index = page_offset + row
+            if 0 <= actual_index < len(reversed_filtered):
+                entry = reversed_filtered[actual_index]
                 if not entry.seen:
                     entry.seen = True
                     changed = True

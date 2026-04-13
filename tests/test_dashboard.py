@@ -590,3 +590,253 @@ class TestMarkAsSeen:
         assert hasattr(dashboard, "_mark_all_seen_action")
         assert dashboard._mark_all_seen_action.text() == "Mark All Seen"
 
+
+class TestPagination:
+    """Tests for the entry table pagination feature."""
+
+    def _make_entries(self, count: int, feed_url: str = "https://a.com/feed") -> list[FeedEntry]:
+        return [
+            FeedEntry(
+                feed_url=feed_url,
+                title=f"Entry {i}",
+                link=f"https://a.com/{i}",
+                published="2024-01-01",
+                entry_id=f"e{i}",
+            )
+            for i in range(count)
+        ]
+
+    def test_pagination_hidden_when_entries_fit_in_one_page(self, qtbot, tmp_path):
+        """Pagination controls should be hidden when total entries <= page_size."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 100
+
+        dashboard.entries = self._make_entries(50)
+        dashboard._refresh_table()
+
+        assert dashboard._pagination_widget.isHidden()
+        assert dashboard._entry_table.rowCount() == 50
+
+    def test_pagination_shown_when_entries_exceed_page_size(self, qtbot, tmp_path):
+        """Pagination controls should be visible when total entries > page_size."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 10
+
+        dashboard.entries = self._make_entries(25)
+        dashboard._refresh_table()
+
+        assert not dashboard._pagination_widget.isHidden()
+        assert dashboard._entry_table.rowCount() == 10
+
+    def test_first_page_shows_correct_entries(self, qtbot, tmp_path):
+        """First page should show the most recent entries (reversed order)."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        # Page 0 of reversed [e11..e0] → titles {Entry 7..Entry 11}
+        assert dashboard._entry_table.rowCount() == 5
+        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        assert titles == {"Entry 7", "Entry 8", "Entry 9", "Entry 10", "Entry 11"}
+
+    def test_next_page_shows_next_entries(self, qtbot, tmp_path):
+        """Next page navigation should advance to the next set of entries."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        dashboard._on_next_page()
+
+        assert dashboard._current_page == 1
+        assert dashboard._entry_table.rowCount() == 5
+        # Page 1 of reversed [e11..e0] → offset 5..9 → {Entry 2..Entry 6}
+        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        assert titles == {"Entry 2", "Entry 3", "Entry 4", "Entry 5", "Entry 6"}
+
+    def test_prev_page_navigates_back(self, qtbot, tmp_path):
+        """Prev page navigation should go back to the previous set of entries."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 1
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        dashboard._on_prev_page()
+
+        assert dashboard._current_page == 0
+        # Page 0 of reversed [e11..e0] → titles {Entry 7..Entry 11}
+        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        assert titles == {"Entry 7", "Entry 8", "Entry 9", "Entry 10", "Entry 11"}
+
+    def test_prev_page_no_op_on_first_page(self, qtbot, tmp_path):
+        """Prev page should be a no-op when already on page 0."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+        dashboard._on_prev_page()
+
+        assert dashboard._current_page == 0
+
+    def test_page_label_shows_correct_page_info(self, qtbot, tmp_path):
+        """Page label should reflect current page and total pages."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        assert dashboard._page_label.text() == "Page 1 of 3"
+
+        dashboard._on_next_page()
+        assert dashboard._page_label.text() == "Page 2 of 3"
+
+    def test_prev_button_disabled_on_first_page(self, qtbot, tmp_path):
+        """Prev button should be disabled on the first page."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        assert not dashboard._prev_page_btn.isEnabled()
+        assert dashboard._next_page_btn.isEnabled()
+
+    def test_next_button_disabled_on_last_page(self, qtbot, tmp_path):
+        """Next button should be disabled on the last page."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(10)
+        # Exactly 2 pages; navigate to last
+        dashboard._on_next_page()
+        dashboard._refresh_table()
+
+        assert not dashboard._next_page_btn.isEnabled()
+        assert dashboard._prev_page_btn.isEnabled()
+
+    def test_filter_change_resets_to_page_zero(self, qtbot, tmp_path):
+        """Changing the filter should reset to the first page."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 2
+
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries(25)
+
+        dashboard._filter_combo.setCurrentText("Feed A")
+
+        assert dashboard._current_page == 0
+
+    def test_page_clamped_when_entries_reduce(self, qtbot, tmp_path):
+        """Current page should be clamped when fewer entries are available."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 4  # would be out of range for 12 entries (3 pages)
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._refresh_table()
+
+        # Should have been clamped to last valid page (page 2)
+        assert dashboard._current_page == 2
+
+    def test_last_page_may_have_fewer_rows(self, qtbot, tmp_path):
+        """Last page should show remaining entries (fewer than page_size)."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        # Navigate to last page (page 2, index 2)
+        dashboard._on_next_page()
+        dashboard._on_next_page()
+
+        # 12 entries, page_size=5: pages 0,1 have 5; page 2 has 2
+        assert dashboard._entry_table.rowCount() == 2
+
+    def test_double_click_on_second_page_resolves_correct_entry(self, qtbot, tmp_path):
+        """Double-clicking a row on page 2 should mark an entry from page 2 as seen."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        dashboard.entries = self._make_entries(12)
+        dashboard._on_next_page()  # now on page 1
+
+        # Page 1 contains reversed_filtered[5..9] = e6, e5, e4, e3, e2
+        page1_ids = {"e2", "e3", "e4", "e5", "e6"}
+
+        mock_index = MagicMock()
+        mock_index.row.return_value = 0
+
+        with patch("PySide6.QtGui.QDesktopServices.openUrl"):
+            dashboard._on_entry_double_click(mock_index)
+
+        # Exactly one entry from page 1 should be marked as seen
+        seen_entries = [e for e in dashboard.entries if e.seen]
+        assert len(seen_entries) == 1
+        assert seen_entries[0].entry_id in page1_ids
+
+    def test_mark_selected_seen_on_second_page(self, qtbot, tmp_path):
+        """_mark_selected_seen should correctly map rows on page 2 to entries."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
+        dashboard.page_size = 5
+        dashboard._current_page = 0
+
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries(12)
+        dashboard._on_next_page()  # now on page 1
+        dashboard._refresh_table()
+
+        # Page 1 contains reversed_filtered[5..9] = e6, e5, e4, e3, e2
+        page1_ids = {"e2", "e3", "e4", "e5", "e6"}
+
+        dashboard._entry_table.selectRow(0)
+        dashboard._mark_selected_seen()
+
+        # Exactly one entry from page 1 should be marked as seen
+        seen_entries = [e for e in dashboard.entries if e.seen]
+        assert len(seen_entries) == 1
+        assert seen_entries[0].entry_id in page1_ids
