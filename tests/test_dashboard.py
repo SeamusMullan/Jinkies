@@ -707,8 +707,9 @@ class TestMarkAsSeen:
         assert not store_path.exists()
         assert all(not e.seen for e in dashboard.entries)
 
-    def test_toolbar_mark_all_seen_action_exists(self, qtbot):
+    def test_toolbar_mark_all_seen_action_exists(self, qtbot, monkeypatch, tmp_path):
         """The toolbar should have a 'Mark All Seen' action."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         assert hasattr(dashboard, "_mark_all_seen_action")
@@ -1171,13 +1172,14 @@ class TestEntrySearch:
         assert result[0].entry_id == "a2"
 
 class TestToolbarTooltips:
-    def test_toolbar_action_tooltips(self, qtbot):
+    def test_toolbar_action_tooltips(self, qtbot, monkeypatch, tmp_path):
         """Each toolbar action should have a non-empty tooltip."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
-        assert dashboard._add_feed_action.toolTip() != ""
-        assert dashboard._remove_feed_action.toolTip() != ""
-        assert dashboard._import_feeds_action.toolTip() != ""
-        assert dashboard._settings_action.toolTip() != ""
-        assert dashboard._pause_action.toolTip() != ""
-        assert dashboard._mark_all_seen_action.toolTip() != ""
+        assert dashboard._add_feed_action.toolTip().strip() != ""
+        assert dashboard._remove_feed_action.toolTip().strip() != ""
+        assert dashboard._import_feeds_action.toolTip().strip() != ""
+        assert dashboard._settings_action.toolTip().strip() != ""
+        assert dashboard._pause_action.toolTip().strip() != ""
+        assert dashboard._mark_all_seen_action.toolTip().strip() != ""
