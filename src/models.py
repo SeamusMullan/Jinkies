@@ -115,6 +115,7 @@ class FeedEntry:
         published: ISO 8601 publication timestamp.
         entry_id: Unique identifier for this entry.
         seen: Whether the user has seen this entry.
+        summary: Optional plain-text summary or content snippet for the entry.
     """
 
     feed_url: str
@@ -123,6 +124,7 @@ class FeedEntry:
     published: str
     entry_id: str
     seen: bool = False
+    summary: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -137,6 +139,7 @@ class FeedEntry:
             "published": self.published,
             "entry_id": self.entry_id,
             "seen": self.seen,
+            "summary": self.summary,
         }
 
     @classmethod
@@ -156,6 +159,7 @@ class FeedEntry:
             published=data.get("published", ""),
             entry_id=data["entry_id"],
             seen=data.get("seen", False),
+            summary=data.get("summary", ""),
         )
 
 
