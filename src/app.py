@@ -293,7 +293,10 @@ class JinkiesApp:
         # emission come from the same feed, so checking the first entry is
         # sufficient.
         feed_map = {f.url: f for f in self.config.feeds}
-        feed = feed_map.get(entries[0].feed_url) if entries else None
+        if entries:
+            feed = feed_map.get(entries[0].feed_url)
+        else:
+            feed = None
         sound_file = feed.sound_file if feed else None
         self.audio.play("new_entry", sound_file=sound_file)
 
