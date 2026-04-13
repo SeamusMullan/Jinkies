@@ -98,6 +98,10 @@ class Dashboard(QMainWindow):
         self._setup_central()
         self._setup_statusbar()
 
+        # Populate the table with any entries loaded from disk so they are
+        # visible immediately on startup rather than waiting for the first poll.
+        self._refresh_table()
+
         # If one or more midnights passed while the app was closed, the stored
         # stats_date will be before today.  Reset now so the counters are always
         # accurate for the current calendar day, then kick off the timer for
@@ -284,6 +288,12 @@ class Dashboard(QMainWindow):
     def add_entries(self, new_entries: list[FeedEntry]) -> None:
         """Add new entries to the table and update stats.
 
+        Only truly new entries are inserted; duplicates are silently ignored.
+        The table is updated incrementally (new rows prepended, evicted rows
+        removed from the bottom) rather than being rebuilt from scratch, so
+        the operation is O(k) in the number of *new* entries rather than O(n)
+        in the total number of entries.
+
         Oldest entries are evicted when :attr:`max_entries` is exceeded.
 
         Args:
@@ -291,13 +301,74 @@ class Dashboard(QMainWindow):
         """
         existing_ids = {e.entry_id for e in self.entries}
         unique_new = [e for e in new_entries if e.entry_id not in existing_ids]
+        if not unique_new:
+            return
+
+        # Capture entries that will be evicted (oldest, at the start of the list)
+        # before modifying self.entries so we can remove their rows from the table.
+        total_after = len(self.entries) + len(unique_new)
+        num_evicted = max(0, total_after - self.max_entries)
+        evicted = self.entries[:num_evicted] if num_evicted > 0 else []
+
         self.entries.extend(unique_new)
         if len(self.entries) > self.max_entries:
             self.entries = self.entries[-self.max_entries:]
+
         self._entries_today += len(unique_new)
-        self._refresh_table()
+        self._insert_new_rows(unique_new, evicted)
         self._update_stats()
         self._save_entries_store()
+
+    def _insert_new_rows(
+        self, new_entries: list[FeedEntry], evicted: list[FeedEntry]
+    ) -> None:
+        """Incrementally update the table by prepending new rows and removing evicted rows.
+
+        New entries are inserted at the top of the table (newest-first display
+        order) and evicted entries are removed from the bottom.  Only entries
+        that match the active filter are touched, so the method remains O(k)
+        where k is the number of new/evicted entries visible under the filter.
+
+        Args:
+            new_entries: Newly added FeedEntry objects to insert into the table.
+            evicted: FeedEntry objects that were evicted due to the max_entries cap.
+        """
+        current_filter = self._filter_combo.currentText()
+
+        def _passes_filter(entry: FeedEntry) -> bool:
+            return (
+                current_filter == "All Feeds"
+                or self._feed_name_for(entry.feed_url) == current_filter
+            )
+
+        filtered_new = [e for e in new_entries if _passes_filter(e)]
+        evicted_count = sum(1 for e in evicted if _passes_filter(e))
+
+        if not filtered_new and evicted_count == 0:
+            return
+
+        self._entry_table.setSortingEnabled(False)
+
+        # Prepend each new entry at row 0.  Inserting in forward order means
+        # the last element of filtered_new (appended most recently to
+        # self.entries) ends up at row 0, matching the reversed display order
+        # produced by _refresh_table.
+        for entry in filtered_new:
+            self._entry_table.insertRow(0)
+            self._entry_table.setItem(0, 0, QTableWidgetItem(entry.title))
+            self._entry_table.setItem(
+                0, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
+            )
+            self._entry_table.setItem(0, 2, QTableWidgetItem(entry.published))
+            self._entry_table.setItem(0, 3, QTableWidgetItem("Seen" if entry.seen else "New"))
+
+        # Remove evicted rows from the bottom of the table.
+        for _ in range(evicted_count):
+            last_row = self._entry_table.rowCount() - 1
+            if last_row >= 0:
+                self._entry_table.removeRow(last_row)
+
+        self._entry_table.setSortingEnabled(True)
 
     def _refresh_table(self) -> None:
         """Rebuild the entry table from current entries, filter, and current page."""
