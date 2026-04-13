@@ -23,6 +23,13 @@ from PySide6.QtWidgets import (
 if TYPE_CHECKING:
     from PySide6.QtGui import QIcon
 
+# Module-level registry of active notification dialogs.
+# Using a module-level list (rather than a class attribute) avoids the
+# shared-mutable-state problem: the registry is a single, explicit
+# singleton that is not accidentally inherited by subclasses and can be
+# cleared in tests without touching the class itself.
+_active_notifications: list[NotificationDialog] = []
+
 
 class NotificationDialog(QDialog):
     """Custom notification popup for Windows.
@@ -33,8 +40,6 @@ class NotificationDialog(QDialog):
     Attributes:
         _dismiss_timer: Timer for auto-dismissal.
     """
-
-    _active_notifications: list[NotificationDialog] = []
 
     def __init__(
         self,
@@ -68,7 +73,7 @@ class NotificationDialog(QDialog):
         self._dismiss_timer.start(timeout_ms)
 
         self._fade_in()
-        NotificationDialog._active_notifications.append(self)
+        _active_notifications.append(self)
 
     def _setup_ui(self, title: str, body: str) -> None:
         """Build the notification UI.
@@ -129,7 +134,10 @@ class NotificationDialog(QDialog):
         if not screen:
             return
         geo = screen.availableGeometry()
-        offset = len(NotificationDialog._active_notifications) * (self.sizeHint().height() + 8)
+        # Filter to only visible notifications to avoid stale entries
+        # affecting the offset calculation.
+        visible = [n for n in _active_notifications if n.isVisible()]
+        offset = len(visible) * (self.sizeHint().height() + 8)
         x = geo.right() - self.sizeHint().width() - 16
         y = geo.bottom() - self.sizeHint().height() - 16 - offset
         self.move(x, y)
@@ -156,8 +164,8 @@ class NotificationDialog(QDialog):
     def _dismiss(self) -> None:
         """Close and clean up the notification."""
         self._dismiss_timer.stop()
-        if self in NotificationDialog._active_notifications:
-            NotificationDialog._active_notifications.remove(self)
+        if self in _active_notifications:
+            _active_notifications.remove(self)
         self.close()
         self.deleteLater()
 
