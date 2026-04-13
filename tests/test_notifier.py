@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from PySide6.QtGui import QGuiApplication
 
+import src.notifier as notifier_module
 from src.notifier import NotificationDialog, Notifier
 
 
