@@ -387,6 +387,131 @@ class TestDashboard:
         dashboard.add_entries(entries)
         assert len(dashboard.entries) == 10
 
+    def test_add_entries_noop_when_all_duplicates(self, qtbot, tmp_path, monkeypatch):
+        """add_entries must be a no-op when every entry is already present."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        entry = FeedEntry(
+            feed_url="https://a.com/feed",
+            title="Entry",
+            link="https://a.com/1",
+            published="2024-01-01",
+            entry_id="e1",
+        )
+        dashboard.add_entries([entry])
+        assert dashboard._entry_table.rowCount() == 1
+
+        # Adding the same entry again must not change anything.
+        dashboard.add_entries([entry])
+        assert dashboard._entry_table.rowCount() == 1
+        assert len(dashboard.entries) == 1
+
+    def test_insert_new_rows_prepends_newest_at_top(self, qtbot, tmp_path, monkeypatch):
+        """Both entries should appear in the table after incremental insertion."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        entries = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Older Entry",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="e1",
+            ),
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Newer Entry",
+                link="https://a.com/2",
+                published="2024-01-02",
+                entry_id="e2",
+            ),
+        ]
+        dashboard.add_entries(entries)
+
+        assert dashboard._entry_table.rowCount() == 2
+        titles = {
+            dashboard._entry_table.item(r, 0).text()
+            for r in range(dashboard._entry_table.rowCount())
+        }
+        assert titles == {"Older Entry", "Newer Entry"}
+
+    def test_insert_new_rows_removes_evicted_rows_from_table(self, qtbot, tmp_path, monkeypatch):
+        """Evicted entries must be removed from the bottom of the visible table."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard.max_entries = 2
+
+        # Seed two entries.
+        initial = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title=f"Entry {i}",
+                link=f"https://a.com/{i}",
+                published="2024-01-01",
+                entry_id=f"e{i}",
+            )
+            for i in range(2)
+        ]
+        dashboard.add_entries(initial)
+        assert dashboard._entry_table.rowCount() == 2
+
+        # Adding one new entry evicts one old entry; table must stay at 2 rows.
+        new_entry = FeedEntry(
+            feed_url="https://a.com/feed",
+            title="New Entry",
+            link="https://a.com/2",
+            published="2024-01-03",
+            entry_id="e2",
+        )
+        dashboard.add_entries([new_entry])
+
+        assert len(dashboard.entries) == 2
+        assert dashboard._entry_table.rowCount() == 2
+        # Newest entry must be at the top.
+        assert dashboard._entry_table.item(0, 0).text() == "New Entry"
+
+    def test_insert_new_rows_respects_active_filter(self, qtbot, tmp_path, monkeypatch):
+        """Only entries matching the active filter should be inserted into the table."""
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard._filter_combo.setCurrentText("Feed A")
+
+        entries = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Feed A Entry",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="a1",
+            ),
+            FeedEntry(
+                feed_url="https://b.com/feed",
+                title="Feed B Entry",
+                link="https://b.com/1",
+                published="2024-01-01",
+                entry_id="b1",
+            ),
+        ]
+        dashboard.add_entries(entries)
+
+        # Only the Feed A entry should appear in the filtered table.
+        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._entry_table.item(0, 0).text() == "Feed A Entry"
+        # Both entries are still in memory.
+        assert len(dashboard.entries) == 2
+
 
 class TestMarkAsSeen:
     """Tests for the bulk mark-as-seen actions."""
