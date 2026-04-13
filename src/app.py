@@ -288,7 +288,14 @@ class JinkiesApp:
             self.dashboard.clear_feed_error(entry.feed_url)
 
         self.dashboard.add_entries(entries)
-        self.audio.play("new_entry")
+
+        # Honour per-feed custom sound if configured.  All entries in a single
+        # emission come from the same feed, so checking the first entry is
+        # sufficient.
+        feed_map = {f.url: f for f in self.config.feeds}
+        feed = feed_map.get(entries[0].feed_url) if entries else None
+        sound_file = feed.sound_file if feed else None
+        self.audio.play("new_entry", sound_file=sound_file)
 
         count = len(entries)
         if count == 1:
