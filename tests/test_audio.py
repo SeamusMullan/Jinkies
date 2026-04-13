@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+import sys
 import wave
+from unittest.mock import MagicMock, patch
 
-from src.audio import AudioPlayer, ensure_default_sounds, generate_wav
+from src.audio import AudioPlayer, ensure_default_sounds, generate_wav, get_sounds_dir
+
+
+class TestGetSoundsDir:
+    def test_dev_environment_returns_sounds_dir(self):
+        """In normal (non-frozen) mode returns a path ending in 'sounds'."""
+        result = get_sounds_dir()
+        assert result.name == "sounds"
+
+    def test_frozen_binary_uses_meipass(self, tmp_path):
+        """In a frozen binary, uses sys._MEIPASS as base directory."""
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "_MEIPASS", str(tmp_path), create=True),
+        ):
+            result = get_sounds_dir()
+        assert result == tmp_path / "sounds"
 
 
 class TestGenerateWav:
@@ -54,3 +72,17 @@ class TestAudioPlayer:
         player = AudioPlayer({"test": "missing.wav"}, sounds_dir=tmp_sounds_dir)
         # Should not raise
         player.play("test")
+
+    def test_play_creates_and_caches_sound_effect(self, tmp_sounds_dir):
+        """play() creates a QSoundEffect on first call and caches it."""
+        generate_wav(tmp_sounds_dir / "beep.wav", frequency=440.0, duration=0.05)
+        player = AudioPlayer({"beep": "beep.wav"}, sounds_dir=tmp_sounds_dir)
+
+        mock_effect = MagicMock()
+        with patch("src.audio.QSoundEffect", return_value=mock_effect):
+            player.play("beep")
+            player.play("beep")  # second call uses the cached effect
+
+        # QSoundEffect constructor called once (cached on second call)
+        assert mock_effect.setSource.call_count == 1
+        assert mock_effect.play.call_count == 2

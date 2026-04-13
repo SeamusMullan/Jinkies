@@ -7,6 +7,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
+import pytest
+
 from src.config import load_config, load_state, save_config, save_state
 from src.models import AppConfig
 
@@ -216,3 +218,70 @@ class TestState:
         save_state(state, tmp_config_dir)
         loaded = load_state(tmp_config_dir)
         assert loaded["errors_today"] == 5
+
+    def test_load_state_naive_timestamp_treated_as_utc(self, tmp_config_dir):
+        """A naive (no tzinfo) timestamp is treated as UTC and kept if recent."""
+        # Write a state file with a naive ISO timestamp (no +00:00 suffix)
+        naive_ts = (datetime.now() - timedelta(days=1)).isoformat()
+        state = {"seen_ids": {"naive-id": naive_ts}}
+        save_state(state, tmp_config_dir)
+        loaded = load_state(tmp_config_dir, max_age_days=30)
+        assert "naive-id" in loaded["seen_ids"]
+
+
+class TestGetConfigDir:
+    """Tests for get_config_dir platform branches."""
+
+    def test_linux_returns_config_subdir(self):
+        """On Linux, returns ~/.config/jinkies."""
+        from src.config import get_config_dir
+        with patch("src.config.sys") as mock_sys:
+            mock_sys.platform = "linux"
+            result = get_config_dir()
+        assert result.parts[-1] == "jinkies"
+        assert ".config" in result.parts
+
+    def test_darwin_returns_application_support_subdir(self):
+        """On macOS, returns ~/Library/Application Support/jinkies."""
+        from src.config import get_config_dir
+        with patch("src.config.sys") as mock_sys:
+            mock_sys.platform = "darwin"
+            result = get_config_dir()
+        assert result.parts[-1] == "jinkies"
+        assert "Application Support" in result.parts
+
+    def test_win32_returns_appdata_subdir(self):
+        """On Windows, returns ~/AppData/Roaming/jinkies."""
+        from src.config import get_config_dir
+        with patch("src.config.sys") as mock_sys:
+            mock_sys.platform = "win32"
+            result = get_config_dir()
+        assert result.parts[-1] == "jinkies"
+        assert "AppData" in result.parts
+
+    def test_unsupported_platform_raises(self):
+        """An unknown platform raises RuntimeError."""
+        from src.config import get_config_dir
+        with patch("src.config.sys") as mock_sys:
+            mock_sys.platform = "haiku"
+            with pytest.raises(RuntimeError, match="Unsupported platform"):
+                get_config_dir()
+
+
+class TestWriteJsonFailure:
+    """Tests for _write_json atomic-write failure handling."""
+
+    def test_write_json_cleans_up_tmp_on_failure(self, tmp_config_dir):
+        """If an error occurs during write, the temp file is removed."""
+        from src.config import _write_json
+
+        target = tmp_config_dir / "test.json"
+
+        # Patch os.replace to simulate a failure after the temp file is written
+        with patch("src.config.os.replace", side_effect=OSError("disk full")):
+            with pytest.raises(OSError, match="disk full"):
+                _write_json(target, {"key": "value"})
+
+        # No leftover .tmp files should remain
+        leftover = list(tmp_config_dir.glob("*.tmp"))
+        assert leftover == []
