@@ -590,3 +590,14 @@ class TestMarkAsSeen:
         assert hasattr(dashboard, "_mark_all_seen_action")
         assert dashboard._mark_all_seen_action.text() == "Mark All Seen"
 
+    def test_toolbar_action_tooltips(self, qtbot):
+        """Each toolbar action should have a non-empty tooltip."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        assert dashboard._add_feed_action.toolTip() != ""
+        assert dashboard._remove_feed_action.toolTip() != ""
+        assert dashboard._import_feeds_action.toolTip() != ""
+        assert dashboard._settings_action.toolTip() != ""
+        assert dashboard._pause_action.toolTip() != ""
+        assert dashboard._mark_all_seen_action.toolTip() != ""
+

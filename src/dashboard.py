@@ -153,27 +153,33 @@ class Dashboard(QMainWindow):
         self.addToolBar(toolbar)
 
         self._add_feed_action = toolbar.addAction("Add Feed")
+        self._add_feed_action.setToolTip("Add a new RSS/Atom feed to monitor")
         self._add_feed_action.triggered.connect(self.add_feed_requested.emit)
 
         self._remove_feed_action = toolbar.addAction("Remove Feed")
+        self._remove_feed_action.setToolTip("Remove the selected feed(s)")
         self._remove_feed_action.triggered.connect(self._on_remove_feed_clicked)
 
         self._import_feeds_action = toolbar.addAction("Import Feeds")
+        self._import_feeds_action.setToolTip("Import feeds from an OPML file")
         self._import_feeds_action.triggered.connect(self.import_feeds_requested.emit)
 
         toolbar.addSeparator()
 
         self._settings_action = toolbar.addAction("Settings")
+        self._settings_action.setToolTip("Open application settings")
         self._settings_action.triggered.connect(self.settings_requested.emit)
 
         toolbar.addSeparator()
 
         self._pause_action = toolbar.addAction("Pause")
+        self._pause_action.setToolTip("Pause or resume feed polling")
         self._pause_action.triggered.connect(self._on_pause_clicked)
 
         toolbar.addSeparator()
 
         self._mark_all_seen_action = toolbar.addAction("Mark All Seen")
+        self._mark_all_seen_action.setToolTip("Mark all current entries as seen")
         self._mark_all_seen_action.triggered.connect(self._on_mark_all_seen_clicked)
 
     def _setup_central(self) -> None:
