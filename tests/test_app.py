@@ -196,6 +196,16 @@ class TestJinkiesAppStartup:
 
         assert app.run() == 42
 
+    def test_init_with_icon_path_sets_window_icon(self):
+        """When icon_path is non-empty, QApplication.setWindowIcon is called."""
+        app, *_ = _make_app(icon_path="/fake/icon.png")
+        app.app.setWindowIcon.assert_called()
+
+    def test_init_with_icon_path_sets_tray_icon(self):
+        """When icon_path is non-empty, tray.setIcon is called with the icon."""
+        app, *_ = _make_app(icon_path="/fake/icon.png")
+        app._tray.setIcon.assert_called()
+
 
 class TestJinkiesAppQuit:
     """_quit() saves state and stops the poller cleanly."""
@@ -520,6 +530,24 @@ class TestSaveState:
         saved = mock_save.call_args[0][0]["seen_ids"]
         assert "bad-ts-id" not in saved
 
+    def test_naive_timestamp_treated_as_utc(self):
+        """A timezone-naive timestamp is treated as UTC and retained if recent."""
+        import datetime
+        app, *_ = _make_app()
+        app.config.seen_ids_max_age_days = 30
+        # Naive datetime (no tzinfo) that is recent
+        naive_ts = (
+            datetime.datetime.now() - datetime.timedelta(days=1)
+        ).isoformat()
+        app._seen_ids.add("naive-id")
+        app._seen_ids_timestamps["naive-id"] = naive_ts
+
+        with patch("src.app.save_state") as mock_save:
+            app._save_state()
+
+        saved = mock_save.call_args[0][0]["seen_ids"]
+        assert "naive-id" in saved
+
 
 # ---------------------------------------------------------------------------
 # Dialog-driven handlers
@@ -735,6 +763,62 @@ class TestOnImportFeeds:
 
         assert len(app.config.feeds) == initial_count
 
+    def test_non_opml_import_uses_import_local_feed(self):
+        """Importing a non-OPML file uses import_local_feed."""
+        from PySide6.QtWidgets import QDialog
+        app, *_ = _make_app()
+        new_feed = Feed(url="https://imported.example.com/feed", name="Imported")
+
+        mock_preview = MagicMock()
+        mock_preview.exec.return_value = QDialog.DialogCode.Accepted
+        mock_preview.get_feeds.return_value = [new_feed]
+
+        with (
+            patch("src.app.QFileDialog.getOpenFileName", return_value=("/tmp/feeds.xml", "")),
+            patch("src.app.import_local_feed", return_value=[new_feed]) as mock_local,
+            patch("src.app.ImportPreviewDialog", return_value=mock_preview),
+            patch("src.app.save_config"),
+        ):
+            app._on_import_feeds()
+
+        mock_local.assert_called_once_with("/tmp/feeds.xml")
+        assert any(f.url == "https://imported.example.com/feed" for f in app.config.feeds)
+
+    def test_empty_import_result_does_nothing(self):
+        """When import returns an empty list, no preview dialog is shown."""
+        app, *_ = _make_app()
+        initial_count = len(app.config.feeds)
+
+        with (
+            patch("src.app.QFileDialog.getOpenFileName", return_value=("/tmp/feeds.opml", "")),
+            patch("src.app.import_opml", return_value=[]),
+            patch("src.app.ImportPreviewDialog") as mock_preview_cls,
+        ):
+            app._on_import_feeds()
+
+        mock_preview_cls.assert_not_called()
+        assert len(app.config.feeds) == initial_count
+
+    def test_empty_preview_selection_does_nothing(self):
+        """When preview dialog returns no feeds (user deselects all), config unchanged."""
+        from PySide6.QtWidgets import QDialog
+        app, *_ = _make_app()
+        new_feed = Feed(url="https://imported.example.com/feed", name="Imported")
+        initial_count = len(app.config.feeds)
+
+        mock_preview = MagicMock()
+        mock_preview.exec.return_value = QDialog.DialogCode.Accepted
+        mock_preview.get_feeds.return_value = []
+
+        with (
+            patch("src.app.QFileDialog.getOpenFileName", return_value=("/tmp/feeds.opml", "")),
+            patch("src.app.import_opml", return_value=[new_feed]),
+            patch("src.app.ImportPreviewDialog", return_value=mock_preview),
+        ):
+            app._on_import_feeds()
+
+        assert len(app.config.feeds) == initial_count
+
 
 # ---------------------------------------------------------------------------
 # _get_icon_path
@@ -776,6 +860,44 @@ class TestGetIconPath:
         if result:
             assert Path(result).exists()
             assert result.endswith(".png") or result.endswith(".ico")
+
+    def test_returns_ico_on_windows_when_present(self, tmp_path):
+        """On Windows, returns .ico path when icon.ico exists."""
+        import sys
+
+        import src.app as app_mod
+
+        fake_src = tmp_path / "src"
+        fake_src.mkdir()
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        ico = assets / "icon.ico"
+        ico.write_bytes(b"fake ico data")
+
+        with (
+            patch.object(app_mod, "__file__", str(fake_src / "app.py")),
+            patch.object(sys, "platform", "win32"),
+        ):
+            result = _get_icon_path()
+
+        assert result == str(ico)
+
+    def test_frozen_binary_uses_meipass(self, tmp_path):
+        """When running as a frozen binary, uses sys._MEIPASS as the base path."""
+        import sys
+
+        assets = tmp_path / "assets"
+        assets.mkdir()
+        png = assets / "icon.png"
+        png.write_bytes(b"fake png data")
+
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "_MEIPASS", str(tmp_path), create=True),
+        ):
+            result = _get_icon_path()
+
+        assert result == str(png)
 
 
 # ---------------------------------------------------------------------------

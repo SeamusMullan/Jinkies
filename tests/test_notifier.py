@@ -146,6 +146,13 @@ class TestNotifier:
         # Should not raise
         notifier.notify("Title", "Body")
 
+    def test_custom_notify_creates_notification_dialog(self, qtbot):
+        """Notifier.notify with custom style invokes NotificationDialog."""
+        notifier = Notifier(style="custom")
+        with patch("src.notifier.NotificationDialog") as mock_dialog_cls:
+            notifier.notify("Alert", "Something happened")
+        mock_dialog_cls.assert_called_once_with("Alert", "Something happened")
+
 
 class TestActiveNotificationsRegistry:
     """Tests that _active_notifications is a proper module-level singleton."""
