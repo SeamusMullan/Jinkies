@@ -208,6 +208,7 @@ class JinkiesApp:
 
         self.dashboard = Dashboard()
         self.dashboard.max_entries = self.config.max_entries
+        self.dashboard.page_size = self.config.page_size
         self.dashboard.update_feeds(self.config.feeds)
         self.dashboard.update_feed_names_mapping(self.config.feeds)
 
@@ -482,6 +483,7 @@ class JinkiesApp:
         """Apply config changes to all components and save."""
         save_config(self.config)
         self.dashboard.max_entries = self.config.max_entries
+        self.dashboard.page_size = self.config.page_size
         self.dashboard.update_feeds(self.config.feeds)
         self.dashboard.update_feed_names_mapping(self.config.feeds)
         self.poller.update_feeds(self.config.feeds)
