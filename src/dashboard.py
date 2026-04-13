@@ -14,10 +14,12 @@ from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -187,8 +189,21 @@ class Dashboard(QMainWindow):
         filter_layout.addWidget(QLabel("Filter:"))
         self._filter_combo = QComboBox()
         self._filter_combo.addItem("All Feeds")
-        self._filter_combo.currentTextChanged.connect(self._apply_filter)
+        self._filter_combo.currentTextChanged.connect(self._on_feed_filter_changed)
         filter_layout.addWidget(self._filter_combo)
+
+        filter_layout.addWidget(QLabel("Search:"))
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("Filter entries…")
+        self._search_input.setClearButtonEnabled(True)
+        self._search_input.textChanged.connect(self._refresh_table)
+        filter_layout.addWidget(self._search_input)
+
+        self._search_content_check = QCheckBox("Include content")
+        self._search_content_check.setToolTip("Also search entry summaries/content when filtering")
+        self._search_content_check.toggled.connect(self._refresh_table)
+        filter_layout.addWidget(self._search_content_check)
+
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
@@ -273,15 +288,40 @@ class Dashboard(QMainWindow):
         self._update_stats()
         self._save_entries_store()
 
-    def _refresh_table(self) -> None:
-        """Rebuild the entry table from current entries and filter."""
+    def _get_display_entries(self) -> list[FeedEntry]:
+        """Return entries filtered by the active feed filter and search text.
+
+        Applies the feed combo filter first, then narrows further by the
+        search input.  When "Include content" is checked the search also
+        matches against each entry's :attr:`~src.models.FeedEntry.summary`.
+
+        Returns:
+            Filtered list of :class:`~src.models.FeedEntry` objects in their
+            original (chronological) order.  The caller is responsible for
+            reversing if newest-first display is required.
+        """
         current_filter = self._filter_combo.currentText()
-        filtered = self.entries
+        filtered: list[FeedEntry] = self.entries
         if current_filter != "All Feeds":
             filtered = [
-                e for e in self.entries
+                e for e in filtered
                 if self._feed_name_for(e.feed_url) == current_filter
             ]
+
+        search = self._search_input.text().strip().lower()
+        if search:
+            include_content = self._search_content_check.isChecked()
+            filtered = [
+                e for e in filtered
+                if search in e.title.lower()
+                or (include_content and search in e.summary.lower())
+            ]
+
+        return filtered
+
+    def _refresh_table(self) -> None:
+        """Rebuild the entry table from current entries and filter."""
+        filtered = self._get_display_entries()
 
         self._entry_table.setSortingEnabled(False)
         self._entry_table.setRowCount(len(filtered))
@@ -419,6 +459,20 @@ class Dashboard(QMainWindow):
             parts.append("PAUSED")
         self._stats_label.setText("  |  ".join(parts))
 
+    def _on_feed_filter_changed(self, _text: str) -> None:
+        """Reset the search input and re-filter the table when the feed selection changes.
+
+        Clearing the search input when the feed selection changes satisfies the
+        acceptance criterion "Filter state resets when feed selection changes".
+
+        Args:
+            _text: The newly selected feed name (unused directly).
+        """
+        self._search_input.blockSignals(True)
+        self._search_input.clear()
+        self._search_input.blockSignals(False)
+        self._refresh_table()
+
     def _apply_filter(self, _text: str) -> None:
         """Re-filter the entry table when filter selection changes.
 
@@ -438,15 +492,7 @@ class Dashboard(QMainWindow):
             index: The model index of the double-clicked row.
         """
         row = index.row()  # type: ignore[union-attr]
-        current_filter = self._filter_combo.currentText()
-        filtered = self.entries
-        if current_filter != "All Feeds":
-            filtered = [
-                e for e in self.entries
-                if self._feed_name_for(e.feed_url) == current_filter
-            ]
-
-        reversed_filtered = list(reversed(filtered))
+        reversed_filtered = list(reversed(self._get_display_entries()))
         if 0 <= row < len(reversed_filtered):
             entry = reversed_filtered[row]
             if entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
@@ -534,15 +580,7 @@ class Dashboard(QMainWindow):
         selected row indices (accounting for the reversed display order and the
         active filter) and marks each unseen one as seen before persisting.
         """
-        current_filter = self._filter_combo.currentText()
-        filtered = self.entries
-        if current_filter != "All Feeds":
-            filtered = [
-                e for e in self.entries
-                if self._feed_name_for(e.feed_url) == current_filter
-            ]
-
-        reversed_filtered = list(reversed(filtered))
+        reversed_filtered = list(reversed(self._get_display_entries()))
         selected_rows = sorted({idx.row() for idx in self._entry_table.selectedIndexes()})
 
         changed = False

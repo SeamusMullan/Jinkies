@@ -157,6 +157,7 @@ class FeedPoller(QThread):
 
                 self.seen_ids.add(entry_id)
                 published = entry.get("published", entry.get("updated", ""))
+                summary = entry.get("summary", "")
                 new_entries.append(
                     FeedEntry(
                         feed_url=feed.url,
@@ -165,6 +166,7 @@ class FeedPoller(QThread):
                         published=published,
                         entry_id=entry_id,
                         seen=False,
+                        summary=summary,
                     )
                 )
 

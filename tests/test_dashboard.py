@@ -590,3 +590,207 @@ class TestMarkAsSeen:
         assert hasattr(dashboard, "_mark_all_seen_action")
         assert dashboard._mark_all_seen_action.text() == "Mark All Seen"
 
+
+class TestEntrySearch:
+    """Tests for the real-time entry search/filter functionality."""
+
+    def _make_entries(self) -> list[FeedEntry]:
+        return [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Python release notes",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="a1",
+                summary="New features in Python 3.13",
+            ),
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Rust 1.75 released",
+                link="https://a.com/2",
+                published="2024-01-02",
+                entry_id="a2",
+                summary="Improvements to the borrow checker",
+            ),
+            FeedEntry(
+                feed_url="https://b.com/feed",
+                title="JavaScript tips",
+                link="https://b.com/1",
+                published="2024-01-03",
+                entry_id="b1",
+                summary="Advanced Python-compatible tooling notes",
+            ),
+        ]
+
+    def test_search_input_widget_exists(self, qtbot):
+        """Dashboard should have a _search_input QLineEdit."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        assert hasattr(dashboard, "_search_input")
+
+    def test_search_content_checkbox_exists(self, qtbot):
+        """Dashboard should have a _search_content_check QCheckBox."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        assert hasattr(dashboard, "_search_content_check")
+
+    def test_search_filters_by_title(self, qtbot):
+        """Typing in the search box filters entries by title."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        dashboard._search_input.setText("python")
+        dashboard._refresh_table()
+
+        # Only "Python release notes" matches by title
+        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._entry_table.item(0, 0).text() == "Python release notes"
+
+    def test_search_is_case_insensitive(self, qtbot):
+        """Search should be case-insensitive."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        dashboard._search_input.setText("RUST")
+        dashboard._refresh_table()
+
+        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._entry_table.item(0, 0).text() == "Rust 1.75 released"
+
+    def test_search_empty_shows_all_entries(self, qtbot):
+        """Clearing the search box shows all entries."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        dashboard._search_input.setText("rust")
+        dashboard._refresh_table()
+        assert dashboard._entry_table.rowCount() == 1
+
+        dashboard._search_input.clear()
+        assert dashboard._entry_table.rowCount() == 3
+
+    def test_search_content_off_does_not_match_summary_only(self, qtbot):
+        """Without 'Include content', summary-only matches are excluded."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        # "borrow" appears only in the summary of "Rust 1.75 released"
+        dashboard._search_content_check.setChecked(False)
+        dashboard._search_input.setText("borrow")
+        dashboard._refresh_table()
+
+        assert dashboard._entry_table.rowCount() == 0
+
+    def test_search_content_on_matches_summary(self, qtbot):
+        """With 'Include content' checked, summary text is also searched."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        # "borrow" appears only in the summary of "Rust 1.75 released"
+        dashboard._search_content_check.setChecked(True)
+        dashboard._search_input.setText("borrow")
+        dashboard._refresh_table()
+
+        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._entry_table.item(0, 0).text() == "Rust 1.75 released"
+
+    def test_search_content_on_matches_title_and_summary(self, qtbot):
+        """With 'Include content' checked, entries matching title OR summary are shown."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        # "python" appears in title of entry a1 and summary of entry b1
+        dashboard._search_content_check.setChecked(True)
+        dashboard._search_input.setText("python")
+        dashboard._refresh_table()
+
+        assert dashboard._entry_table.rowCount() == 2
+
+    def test_feed_filter_change_resets_search_text(self, qtbot):
+        """Changing the feed filter combo should clear the search input."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        dashboard._search_input.setText("python")
+        # Changing the feed filter should clear the search
+        dashboard._filter_combo.setCurrentText("Feed A")
+
+        assert dashboard._search_input.text() == ""
+
+    def test_search_combined_with_feed_filter(self, qtbot):
+        """Search and feed filter should both apply simultaneously."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        # Select Feed A first (resets search), then set search text manually
+        dashboard._filter_combo.setCurrentText("Feed A")
+        dashboard._search_input.blockSignals(True)
+        dashboard._search_input.setText("python")
+        dashboard._search_input.blockSignals(False)
+        dashboard._refresh_table()
+
+        # Feed A has 2 entries; only "Python release notes" matches "python" in title
+        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._entry_table.item(0, 0).text() == "Python release notes"
+
+    def test_get_display_entries_respects_search(self, qtbot):
+        """_get_display_entries returns only entries matching the active search."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        feeds = [
+            Feed(url="https://a.com/feed", name="Feed A"),
+            Feed(url="https://b.com/feed", name="Feed B"),
+        ]
+        dashboard.update_feeds(feeds)
+        dashboard.entries = self._make_entries()
+
+        dashboard._search_input.setText("rust")
+        result = dashboard._get_display_entries()
+
+        assert len(result) == 1
+        assert result[0].entry_id == "a2"
