@@ -11,7 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -153,22 +153,27 @@ class Dashboard(QMainWindow):
         self.addToolBar(toolbar)
 
         self._add_feed_action = toolbar.addAction("Add Feed")
+        self._add_feed_action.setShortcut(QKeySequence.StandardKey.New)
         self._add_feed_action.triggered.connect(self.add_feed_requested.emit)
 
         self._remove_feed_action = toolbar.addAction("Remove Feed")
+        self._remove_feed_action.setShortcut(QKeySequence(Qt.Key.Key_Delete))
         self._remove_feed_action.triggered.connect(self._on_remove_feed_clicked)
 
         self._import_feeds_action = toolbar.addAction("Import Feeds")
+        self._import_feeds_action.setShortcut(QKeySequence("Ctrl+I"))
         self._import_feeds_action.triggered.connect(self.import_feeds_requested.emit)
 
         toolbar.addSeparator()
 
         self._settings_action = toolbar.addAction("Settings")
+        self._settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self._settings_action.triggered.connect(self.settings_requested.emit)
 
         toolbar.addSeparator()
 
         self._pause_action = toolbar.addAction("Pause")
+        self._pause_action.setShortcut(QKeySequence("Ctrl+P"))
         self._pause_action.triggered.connect(self._on_pause_clicked)
 
         toolbar.addSeparator()
