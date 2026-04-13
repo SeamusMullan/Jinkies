@@ -1169,3 +1169,15 @@ class TestEntrySearch:
 
         assert len(result) == 1
         assert result[0].entry_id == "a2"
+
+class TestToolbarTooltips:
+    def test_toolbar_action_tooltips(self, qtbot):
+        """Each toolbar action should have a non-empty tooltip."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        assert dashboard._add_feed_action.toolTip() != ""
+        assert dashboard._remove_feed_action.toolTip() != ""
+        assert dashboard._import_feeds_action.toolTip() != ""
+        assert dashboard._settings_action.toolTip() != ""
+        assert dashboard._pause_action.toolTip() != ""
+        assert dashboard._mark_all_seen_action.toolTip() != ""
