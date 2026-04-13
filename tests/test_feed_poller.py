@@ -46,6 +46,36 @@ class TestFeedPoller:
         poller.update_interval(120)
         assert poller.poll_interval == 120
 
+    def test_update_interval_interrupts_sleep(self, sample_feed):
+        """update_interval must wake _interruptible_sleep before the old interval expires."""
+        import time
+
+        poller = FeedPoller(feeds=[sample_feed], poll_interval=60)
+
+        # Start a long sleep in a background thread, then interrupt via update_interval.
+        import threading
+
+        finished = threading.Event()
+
+        def _do_sleep():
+            poller._interruptible_sleep(60)
+            finished.set()
+
+        t = threading.Thread(target=_do_sleep, daemon=True)
+        t.start()
+
+        # Give the sleep a moment to enter its wait loop.
+        time.sleep(0.05)
+
+        start = time.monotonic()
+        poller.update_interval(30)
+        finished.wait(timeout=1.0)
+        elapsed = time.monotonic() - start
+
+        assert finished.is_set(), "_interruptible_sleep did not wake up after update_interval"
+        assert elapsed < 1.0, f"Sleep took too long to interrupt ({elapsed:.2f}s)"
+        assert poller.poll_interval == 30
+
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
     def test_poll_feed_emits_new_entries(

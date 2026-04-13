@@ -97,6 +97,7 @@ class FeedPoller(QThread):
         self.max_backoff_secs = max_backoff_secs
         self._pause_event = Event()
         self._pause_event.set()  # Start unpaused
+        self._sleep_interrupt_event = Event()
         # Per-feed backoff state (only accessed from the poller thread).
         self._backoff_counts: dict[str, int] = {}
         self._next_poll_times: dict[str, float] = {}
@@ -355,15 +356,27 @@ class FeedPoller(QThread):
         return parsed
 
     def _interruptible_sleep(self, seconds: int) -> None:
-        """Sleep in small increments to allow quick shutdown.
+        """Sleep for *seconds*, waking early on shutdown or interval change.
+
+        Uses a :class:`threading.Event` so that callers like
+        :meth:`update_interval` can interrupt the sleep immediately instead
+        of waiting for the current interval to expire.
 
         Args:
             seconds: Total seconds to sleep.
         """
-        for _ in range(seconds * 10):
+        self._sleep_interrupt_event.clear()
+        deadline = time.monotonic() + seconds
+        while True:
             if self.isInterruptionRequested():
                 return
-            time.sleep(0.1)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            # Wait up to 0.1 s (or the remaining time if less).
+            # Returns True if the event was set (early wake), False on timeout.
+            if self._sleep_interrupt_event.wait(timeout=min(0.1, remaining)):
+                return
 
     def pause(self) -> None:
         """Pause the polling loop."""
@@ -392,9 +405,14 @@ class FeedPoller(QThread):
             self.feeds = feeds
 
     def update_interval(self, interval: int) -> None:
-        """Update the polling interval.
+        """Update the polling interval and interrupt any in-progress sleep.
+
+        The currently sleeping :meth:`_interruptible_sleep` is woken
+        immediately so the next poll cycle uses the new interval without
+        waiting for the old one to expire.
 
         Args:
             interval: New interval in seconds.
         """
         self.poll_interval = interval
+        self._sleep_interrupt_event.set()
