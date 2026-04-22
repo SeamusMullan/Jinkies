@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from PySide6.QtWidgets import QMessageBox
 
 from src.dashboard import Dashboard
@@ -12,6 +13,10 @@ from src.models import Feed, FeedEntry
 
 
 class TestDashboard:
+    @pytest.fixture(autouse=True)
+    def _isolate_config(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
+
     def test_init(self, qtbot):
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
@@ -184,7 +189,7 @@ class TestDashboard:
         dashboard.reset_daily_stats()
         assert dashboard._stats_date == datetime.date.today()
 
-    def test_missed_midnight_resets_counters_on_startup(self, qtbot, monkeypatch, tmp_path):
+    def test_missed_midnight_resets_counters_on_startup(self, qtbot, tmp_path):
         """Counters should be zeroed when stats_date in store is before today."""
         import datetime
         import json
@@ -193,8 +198,6 @@ class TestDashboard:
         store = tmp_path / "store.json"
         past_date = (datetime.date.today() - datetime.timedelta(days=2)).isoformat()
         store.write_text(json.dumps({"entries": [], "stats_date": past_date}))
-
-        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
 
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
@@ -309,7 +312,7 @@ class TestDashboard:
         qtbot.addWidget(dashboard)
 
         store_path = tmp_path / "store.json"
-        dashboard._entries_store_location = store_path
+        snapshot = store_path.read_bytes()
 
         entry = FeedEntry(
             feed_url="https://example.com/feed",
@@ -326,9 +329,9 @@ class TestDashboard:
 
         dashboard._on_entry_double_click(mock_index)
 
-        # Entry with no link must NOT be marked as seen, and store must not exist.
+        # Entry with no link must NOT be marked as seen, store must be unchanged.
         assert entry.seen is False
-        assert not store_path.exists()
+        assert store_path.read_bytes() == snapshot
 
     def test_add_entries_evicts_oldest_when_limit_exceeded(self, qtbot, tmp_path):
         """Oldest entries must be evicted when max_entries is exceeded."""
@@ -387,9 +390,8 @@ class TestDashboard:
         dashboard.add_entries(entries)
         assert len(dashboard.entries) == 10
 
-    def test_add_entries_noop_when_all_duplicates(self, qtbot, tmp_path, monkeypatch):
+    def test_add_entries_noop_when_all_duplicates(self, qtbot, tmp_path):
         """add_entries must be a no-op when every entry is already present."""
-        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
 
@@ -408,9 +410,8 @@ class TestDashboard:
         assert dashboard._entry_table.rowCount() == 1
         assert len(dashboard.entries) == 1
 
-    def test_insert_new_rows_prepends_newest_at_top(self, qtbot, tmp_path, monkeypatch):
+    def test_insert_new_rows_prepends_newest_at_top(self, qtbot, tmp_path):
         """Both entries should appear in the table after incremental insertion."""
-        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
 
@@ -439,9 +440,8 @@ class TestDashboard:
         }
         assert titles == {"Older Entry", "Newer Entry"}
 
-    def test_insert_new_rows_removes_evicted_rows_from_table(self, qtbot, tmp_path, monkeypatch):
+    def test_insert_new_rows_removes_evicted_rows_from_table(self, qtbot, tmp_path):
         """Evicted entries must be removed from the bottom of the visible table."""
-        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         dashboard.max_entries = 2
@@ -475,9 +475,8 @@ class TestDashboard:
         # Newest entry must be at the top.
         assert dashboard._entry_table.item(0, 0).text() == "New Entry"
 
-    def test_insert_new_rows_respects_active_filter(self, qtbot, tmp_path, monkeypatch):
+    def test_insert_new_rows_respects_active_filter(self, qtbot, tmp_path):
         """Only entries matching the active filter should be inserted into the table."""
-        monkeypatch.setattr("src.dashboard.get_config_dir", lambda: tmp_path)
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
 
