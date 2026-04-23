@@ -5,10 +5,39 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
-from src.config import load_config, load_state, save_config, save_state
+import pytest
+
+from src.config import get_config_dir, load_config, load_state, save_config, save_state
 from src.models import AppConfig
+
+
+_FAKE_HOME = Path("/fake/home")
+
+
+class TestGetConfigDir:
+    """Tests for platform-specific path construction in get_config_dir."""
+
+    @pytest.mark.parametrize(
+        ("platform", "expected"),
+        [
+            ("linux", _FAKE_HOME / ".config" / "jinkies"),
+            ("darwin", _FAKE_HOME / "Library" / "Application Support" / "jinkies"),
+            ("win32", _FAKE_HOME / "AppData" / "Roaming" / "jinkies"),
+        ],
+    )
+    def test_platform_specific_paths(self, platform, expected):
+        """get_config_dir returns the correct path for each supported platform."""
+        with patch("sys.platform", platform), patch("src.config.Path.home", return_value=_FAKE_HOME):
+            result = get_config_dir()
+        assert result == expected
+
+    def test_unsupported_platform_raises(self):
+        """get_config_dir raises RuntimeError for unsupported platforms."""
+        with patch("sys.platform", "freebsd"), pytest.raises(RuntimeError, match="Unsupported platform"):
+            get_config_dir()
 
 
 class TestConfig:
