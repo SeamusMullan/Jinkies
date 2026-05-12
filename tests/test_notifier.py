@@ -15,23 +15,23 @@ class TestNotificationDialog:
     @pytest.fixture(autouse=True)
     def clear_active_notifications(self):
         """Isolate _active_notifications between tests to prevent pollution."""
-        NotificationDialog._active_notifications.clear()
+        notifier_module._active_notifications.clear()
         yield
-        NotificationDialog._active_notifications.clear()
+        notifier_module._active_notifications.clear()
 
     def test_active_notifications_tracks_instance(self, qtbot):
         dlg = NotificationDialog("Title", "Body", timeout_ms=60000)
         qtbot.addWidget(dlg)
-        assert dlg in NotificationDialog._active_notifications
+        assert dlg in notifier_module._active_notifications
 
     def test_multiple_dialogs_all_tracked(self, qtbot):
         dlg1 = NotificationDialog("T1", "B1", timeout_ms=60000)
         dlg2 = NotificationDialog("T2", "B2", timeout_ms=60000)
         qtbot.addWidget(dlg1)
         qtbot.addWidget(dlg2)
-        assert dlg1 in NotificationDialog._active_notifications
-        assert dlg2 in NotificationDialog._active_notifications
-        assert len(NotificationDialog._active_notifications) == 2
+        assert dlg1 in notifier_module._active_notifications
+        assert dlg2 in notifier_module._active_notifications
+        assert len(notifier_module._active_notifications) == 2
 
     def test_position_within_screen_bounds(self, qtbot):
         dlg = NotificationDialog("Title", "Body", timeout_ms=60000)
@@ -39,8 +39,13 @@ class TestNotificationDialog:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             pytest.skip("No primary screen available to validate dialog geometry")
-        geo = screen.availableGeometry()
-        assert geo.contains(dlg.geometry())
+        # On multi-monitor setups the dialog may land on a secondary screen;
+        # check against the full virtual desktop instead of just the primary.
+        all_screens = QGuiApplication.screens()
+        combined = all_screens[0].availableGeometry()
+        for s in all_screens[1:]:
+            combined = combined.united(s.availableGeometry())
+        assert combined.contains(dlg.geometry())
 
     def test_position_stacked_above_previous(self, qtbot):
         dlg1 = NotificationDialog("T1", "B1", timeout_ms=60000)
@@ -85,9 +90,9 @@ class TestNotificationDialog:
     def test_dismiss_removes_from_active_notifications(self, qtbot):
         dlg = NotificationDialog("Title", "Body", timeout_ms=60000)
         qtbot.addWidget(dlg)
-        assert dlg in NotificationDialog._active_notifications
+        assert dlg in notifier_module._active_notifications
         dlg._dismiss()
-        assert dlg not in NotificationDialog._active_notifications
+        assert dlg not in notifier_module._active_notifications
 
     def test_dismiss_stops_timer(self, qtbot):
         dlg = NotificationDialog("Title", "Body", timeout_ms=60000)
