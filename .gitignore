@@ -11,3 +11,6 @@ build/
 .pytest_cache/
 .ruff_cache/
 store.json
+.coverage
+coverage.xml
+coverage.json

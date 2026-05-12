@@ -5,6 +5,8 @@ from __future__ import annotations
 import multiprocessing
 from pathlib import Path
 
+import pytest
+
 _SUBPROCESS_TIMEOUT_SECS = 30
 
 # ---------------------------------------------------------------------------
@@ -107,3 +109,47 @@ class TestSingleInstanceLock:
             assert _try_lock(tmp_path) is True
         finally:
             _release_lock(tmp_path)
+
+    def test_try_lock_returns_false_on_open_oserror(self, tmp_path):
+        """_try_lock returns False when the lock file cannot be opened."""
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from src.app import _try_lock
+
+        with patch.object(Path, "open", side_effect=OSError("permission denied")):
+            result = _try_lock(tmp_path)
+
+        assert result is False
+
+    def test_try_lock_returns_false_on_flock_oserror(self, tmp_path):
+        """_try_lock returns False when fcntl.flock raises OSError (already locked)."""
+        import sys
+        if sys.platform == "win32":
+            pytest.skip("fcntl not available on Windows")
+
+        from unittest.mock import patch
+
+        from src.app import _try_lock
+
+        with patch("fcntl.flock", side_effect=OSError("already locked")):
+            result = _try_lock(tmp_path)
+
+        assert result is False
+
+    def test_release_lock_handles_close_oserror(self, tmp_path):
+        """_release_lock does not propagate OSError from file handle close."""
+        from unittest.mock import MagicMock
+
+        import src.app as app_mod
+        from src.app import _release_lock
+
+        mock_fh = MagicMock()
+        mock_fh.close.side_effect = OSError("close failed")
+        app_mod._lock_fh = mock_fh
+
+        try:
+            # Should not raise
+            _release_lock(tmp_path)
+        finally:
+            app_mod._lock_fh = None
