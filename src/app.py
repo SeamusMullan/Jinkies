@@ -66,7 +66,7 @@ def _get_icon_path() -> str:
 # Module-level handle kept open for the lifetime of the process so the OS-level
 # lock remains held.  The OS automatically releases it on exit (clean or crash),
 # which eliminates the TOCTOU race present in the old PID-file approach.
-_lock_fh: IO[str] | None = None
+_lock_fh: IO[bytes] | None = None
 
 
 def _try_lock(config_dir: Path) -> bool:
@@ -89,22 +89,25 @@ def _try_lock(config_dir: Path) -> bool:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        fh: IO[str] = lock_path.open("w")
+        fh: IO[bytes] = lock_path.open("wb")
     except OSError:
         return False
 
     try:
         if sys.platform == "win32":
             # msvcrt.locking requires at least one byte to exist in the file.
-            # Write a space, flush it to disk, then seek back before locking.
-            fh.write(" ")
+            # Write a byte and flush before locking so the byte is on disk.
+            fh.write(b" ")
             fh.flush()
             fh.seek(0)
             msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        fh.close()
+        try:
+            fh.close()
+        except OSError:
+            pass
         return False
 
     _lock_fh = fh  # Keep open; closing would release the lock
