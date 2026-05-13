@@ -313,7 +313,7 @@ class TestOnNewEntries:
         with patch("src.app.save_state"):
             app._on_new_entries([entry])
 
-        audio.play.assert_called_once_with("new_entry")
+        audio.play.assert_called_once_with("new_entry", sound_file=None)
         args = notifier.notify.call_args[0]
         assert "New post" in args[1]
 
@@ -325,7 +325,7 @@ class TestOnNewEntries:
         with patch("src.app.save_state"):
             app._on_new_entries(entries)
 
-        audio.play.assert_called_once_with("new_entry")
+        audio.play.assert_called_once_with("new_entry", sound_file=None)
         args = notifier.notify.call_args[0]
         assert "2" in args[1]
 

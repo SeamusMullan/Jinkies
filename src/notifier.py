@@ -65,6 +65,7 @@ class NotificationDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(320)
         self._setup_ui(title, body)
+        self.adjustSize()
         self._position_on_screen()
 
         self._dismiss_timer = QTimer(self)
@@ -137,9 +138,9 @@ class NotificationDialog(QDialog):
         # Filter to only visible notifications to avoid stale entries
         # affecting the offset calculation.
         visible = [n for n in _active_notifications if n.isVisible()]
-        offset = len(visible) * (self.sizeHint().height() + 8)
-        x = geo.right() - self.sizeHint().width() - 16
-        y = geo.bottom() - self.sizeHint().height() - 16 - offset
+        offset = len(visible) * (self.height() + 8)
+        x = geo.right() - self.width() - 16
+        y = geo.bottom() - self.height() - 16 - offset
         self.move(x, y)
 
     def _fade_in(self) -> None:
