@@ -214,6 +214,8 @@ class JinkiesApp:
         self.dashboard.page_size = self.config.page_size
         self.dashboard.update_feeds(self.config.feeds)
         self.dashboard.update_feed_names_mapping(self.config.feeds)
+        if "layout" in self._state:
+            self.dashboard.restore_layout_state(self._state["layout"])
 
         # Connect dashboard signals
         self.dashboard.add_feed_requested.connect(self._on_add_feed)
@@ -526,6 +528,7 @@ class JinkiesApp:
         self._seen_ids_timestamps = pruned
         self._seen_ids.intersection_update(pruned)
         self._state["seen_ids"] = self._seen_ids_timestamps
+        self._state["layout"] = self.dashboard.save_layout_state()
         save_state(self._state)
 
     def _quit(self) -> None:

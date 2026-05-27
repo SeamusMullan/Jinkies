@@ -227,37 +227,31 @@ class Dashboard(QMainWindow):
         layout.addLayout(filter_layout)
 
         # Splitter: feed list | entry table
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self._feed_list = QListWidget()
-        self._feed_list.setMaximumWidth(220)
         self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        splitter.addWidget(self._feed_list)
+        self._splitter.addWidget(self._feed_list)
 
         self._entry_table = QTableWidget(0, 4)
         self._entry_table.setHorizontalHeaderLabels(["Title", "Feed", "Published", "Status"])
-        self._entry_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        self._entry_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._entry_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )
-        self._entry_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.ResizeToContents
-        )
+        header = self._entry_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.resizeSection(0, 400)
+        header.resizeSection(1, 140)
+        header.resizeSection(2, 120)
+        header.resizeSection(3, 60)
         self._entry_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._entry_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._entry_table.setSortingEnabled(True)
         self._entry_table.doubleClicked.connect(self._on_entry_double_click)
         self._entry_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._entry_table.customContextMenuRequested.connect(self._on_entry_table_context_menu)
-        splitter.addWidget(self._entry_table)
+        self._splitter.addWidget(self._entry_table)
 
-        splitter.setSizes([200, 600])
-        layout.addWidget(splitter)
+        self._splitter.setSizes([200, 600])
+        layout.addWidget(self._splitter)
 
         # Pagination controls (shown only when entries exceed page_size)
         pagination_layout = QHBoxLayout()
@@ -283,6 +277,25 @@ class Dashboard(QMainWindow):
         self.setStatusBar(self._statusbar)
         self._stats_label = QLabel("Ready")
         self._statusbar.addPermanentWidget(self._stats_label)
+
+    def save_layout_state(self) -> dict:
+        """Return splitter sizes and column widths for persistence."""
+        header = self._entry_table.horizontalHeader()
+        return {
+            "splitter_sizes": self._splitter.sizes(),
+            "column_widths": [header.sectionSize(i) for i in range(self._entry_table.columnCount())],
+        }
+
+    def restore_layout_state(self, state: dict) -> None:
+        """Apply previously saved splitter sizes and column widths."""
+        sizes = state.get("splitter_sizes")
+        if sizes and len(sizes) == 2:
+            self._splitter.setSizes(sizes)
+        widths = state.get("column_widths")
+        if widths and len(widths) == self._entry_table.columnCount():
+            header = self._entry_table.horizontalHeader()
+            for i, w in enumerate(widths):
+                header.resizeSection(i, w)
 
     def update_feeds(self, feeds: list[Feed]) -> None:
         """Refresh the feed list panel.
