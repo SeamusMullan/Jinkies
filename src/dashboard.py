@@ -273,6 +273,7 @@ class Dashboard(QMainWindow):
         pagination_layout.addStretch()
         self._pagination_widget = QWidget()
         self._pagination_widget.setLayout(pagination_layout)
+        self._pagination_widget.setFixedHeight(36)
         self._pagination_widget.setVisible(False)
         layout.addWidget(self._pagination_widget)
 
