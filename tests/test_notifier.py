@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtGui import QGuiApplication
 
 import src.notifier as notifier_module
-from src.notifier import NotificationDialog, Notifier
+from src.notifier import NotificationDialog, Notifier, _jenkins_accent
 
 
 class TestNotificationDialog:
@@ -122,6 +122,59 @@ class TestNotificationDialog:
         dlg.mousePressEvent(MagicMock())
         assert called
 
+    def test_width_expands_for_long_title(self, qtbot):
+        short = NotificationDialog("Hi", "Body", timeout_ms=60000)
+        long_ = NotificationDialog("MyProject » Very-Long-Job-Name #999 (stable)", "Body", timeout_ms=60000)
+        qtbot.addWidget(short)
+        qtbot.addWidget(long_)
+        assert long_.width() >= short.width()
+
+    def test_url_stored(self, qtbot):
+        dlg = NotificationDialog("T", "B", timeout_ms=60000, url="https://example.com/1")
+        qtbot.addWidget(dlg)
+        assert dlg._url == "https://example.com/1"
+
+    def test_click_opens_url(self, qtbot):
+        dlg = NotificationDialog("T", "B", timeout_ms=60000, url="https://example.com/1")
+        qtbot.addWidget(dlg)
+        with patch("src.notifier.QDesktopServices.openUrl") as mock_open:
+            dlg.mousePressEvent(MagicMock())
+        mock_open.assert_called_once()
+        called_url = mock_open.call_args[0][0]
+        assert called_url.toString() == "https://example.com/1"
+
+    def test_click_without_url_does_not_open_browser(self, qtbot):
+        dlg = NotificationDialog("T", "B", timeout_ms=60000)
+        qtbot.addWidget(dlg)
+        with patch("src.notifier.QDesktopServices.openUrl") as mock_open:
+            dlg.mousePressEvent(MagicMock())
+        mock_open.assert_not_called()
+
+
+class TestJenkinsAccent:
+    def test_stable_green(self):
+        r, g, b = _jenkins_accent("MyProject » Backend #5 (stable)")
+        assert g > r and g > b
+
+    def test_broken_red(self):
+        r, g, b = _jenkins_accent("MyProject » Backend #5 (broken)")
+        assert r > g and r > b
+
+    def test_unstable_orange(self):
+        r, g, b = _jenkins_accent("MyProject » Backend #5 (unstable)")
+        assert r > g > b
+
+    def test_aborted_gray(self):
+        r, g, b = _jenkins_accent("MyProject » Backend #5 (aborted)")
+        # Neutral gray — no single channel dominates
+        assert abs(r - g) < 20 and abs(g - b) < 20
+
+    def test_no_match_returns_none(self):
+        assert _jenkins_accent("Regular feed update") is None
+
+    def test_case_insensitive(self):
+        assert _jenkins_accent("Build (STABLE)") is not None
+
 
 class TestNotifier:
     def test_native_notifier_uses_tray(self, qtbot):
@@ -150,8 +203,8 @@ class TestNotifier:
         """Notifier.notify with custom style invokes NotificationDialog."""
         notifier = Notifier(style="custom")
         with patch("src.notifier.NotificationDialog") as mock_dialog_cls:
-            notifier.notify("Alert", "Something happened")
-        mock_dialog_cls.assert_called_once_with("Alert", "Something happened")
+            notifier.notify("Alert", "Something happened", url="https://example.com/1")
+        mock_dialog_cls.assert_called_once_with("Alert", "Something happened", url="https://example.com/1")
 
 
 class TestActiveNotificationsRegistry:

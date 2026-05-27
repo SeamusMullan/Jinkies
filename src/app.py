@@ -308,11 +308,13 @@ class JinkiesApp:
         if count == 1:
             title = entries[0].title
             body = f"From: {entries[0].feed_url}"
+            link: str | None = entries[0].link or None
         else:
             title = f"{count} new entries"
             body = f"From {len({e.feed_url for e in entries})} feed(s)"
+            link = None
 
-        self.notifier.notify("Jinkies!", f"{title}\n{body}")
+        self.notifier.notify("Jinkies!", f"{title}\n{body}", url=link)
 
         # Update seen IDs and record when each ID was first seen
         now_iso = datetime.datetime.now(datetime.UTC).isoformat()
