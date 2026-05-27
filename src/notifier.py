@@ -60,6 +60,15 @@ def _jenkins_accent(title: str) -> tuple[int, int, int] | None:
     return None
 
 
+def jenkins_status(title: str) -> tuple[str, tuple[int, int, int]] | None:
+    """Return (keyword, rgb) if title contains a Jenkins status suffix."""
+    m = _JENKINS_STATUS_RE.search(title)
+    if m:
+        kw = m.group(1).lower()
+        return kw, _JENKINS_STATUS_COLORS[kw]
+    return None
+
+
 class NotificationDialog(QDialog):
     """Custom notification popup for Windows.
 

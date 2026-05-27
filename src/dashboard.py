@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 
 from src.config import get_config_dir
 from src.models import FeedEntry
+from src.notifier import jenkins_status
 
 if TYPE_CHECKING:
     from src.models import Feed
@@ -354,6 +355,20 @@ class Dashboard(QMainWindow):
         self._update_stats()
         self._save_entries_store()
 
+    def _apply_row_style(self, row: int, entry: FeedEntry) -> str:
+        """Apply Jenkins status color to a table row. Returns status text."""
+        result = jenkins_status(entry.title)
+        if result:
+            kw, (r, g, b) = result
+            alpha = 40 if entry.seen else 80
+            color = QColor(r, g, b, alpha)
+            for col in range(self._entry_table.columnCount()):
+                item = self._entry_table.item(row, col)
+                if item:
+                    item.setBackground(color)
+            return kw
+        return "Seen" if entry.seen else "New"
+
     def _insert_new_rows(
         self, new_entries: list[FeedEntry], evicted: list[FeedEntry]
     ) -> None:
@@ -395,7 +410,9 @@ class Dashboard(QMainWindow):
                 0, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
             )
             self._entry_table.setItem(0, 2, QTableWidgetItem(entry.published))
-            self._entry_table.setItem(0, 3, QTableWidgetItem("Seen" if entry.seen else "New"))
+            self._entry_table.setItem(0, 3, QTableWidgetItem(""))
+            status = self._apply_row_style(0, entry)
+            self._entry_table.item(0, 3).setText(status)
 
         # Remove evicted rows from the bottom of the table.
         for _ in range(evicted_count):
@@ -458,8 +475,9 @@ class Dashboard(QMainWindow):
                 row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
             )
             self._entry_table.setItem(row, 2, QTableWidgetItem(entry.published))
-            status = "Seen" if entry.seen else "New"
-            self._entry_table.setItem(row, 3, QTableWidgetItem(status))
+            self._entry_table.setItem(row, 3, QTableWidgetItem(""))
+            status = self._apply_row_style(row, entry)
+            self._entry_table.item(row, 3).setText(status)
         self._entry_table.setSortingEnabled(True)
 
         # Update pagination controls
