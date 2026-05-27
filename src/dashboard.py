@@ -43,6 +43,25 @@ if TYPE_CHECKING:
     from src.models import Feed
 
 
+_SECTION_HEADER_STYLE = """
+    QPushButton {
+        text-align: left;
+        background-color: #2a2a2a;
+        color: #999999;
+        border: none;
+        border-bottom: 1px solid #3a3a3a;
+        border-top: 1px solid #3a3a3a;
+        padding: 4px 8px;
+        font-weight: bold;
+        font-size: 11px;
+    }
+    QPushButton:hover {
+        background-color: #333333;
+        color: #cccccc;
+    }
+"""
+
+
 class Dashboard(QMainWindow):
     """Main application window showing feeds, entries, and stats.
 
@@ -57,7 +76,7 @@ class Dashboard(QMainWindow):
         entries: List of currently displayed FeedEntry objects.
         max_entries: Maximum number of entries to keep; oldest are evicted when
             this limit is exceeded.
-        page_size: Number of entries shown per page in the entry table.
+        page_size: Number of read entries shown per page.
     """
 
     add_feed_requested = Signal()
@@ -79,6 +98,10 @@ class Dashboard(QMainWindow):
         self.max_entries: int = 10_000
         self.page_size: int = 100
         self._current_page: int = 0
+        self._unread_collapsed: bool = False
+        self._read_collapsed: bool = False
+        self._unread_count: int = 0
+        self._read_count: int = 0
 
         # Create store at default location if it doesnt exist
         self._entries_store_location = get_config_dir() / "store.json"
@@ -198,8 +221,29 @@ class Dashboard(QMainWindow):
         self._mark_all_seen_action.setToolTip("Mark all current entries as seen")
         self._mark_all_seen_action.triggered.connect(self._on_mark_all_seen_clicked)
 
+    def _make_table(self) -> QTableWidget:
+        """Create a standard entry table widget."""
+        table = QTableWidget(0, 4)
+        table.setHorizontalHeaderLabels(["Title", "Feed", "Published", "Status"])
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setStretchLastSection(False)
+        header.resizeSection(0, 400)
+        header.resizeSection(1, 140)
+        header.resizeSection(2, 120)
+        header.resizeSection(3, 60)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        table.setSortingEnabled(True)
+        table.doubleClicked.connect(lambda idx, t=table: self._on_entry_double_click(idx, t))
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(
+            lambda pos, t=table: self._on_entry_table_context_menu(pos, t)
+        )
+        return table
+
     def _setup_central(self) -> None:
-        """Create the central widget with feed list, entry table, and filter."""
+        """Create the central widget with feed list, entry tables, and filter."""
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
@@ -227,34 +271,42 @@ class Dashboard(QMainWindow):
         filter_layout.addStretch()
         layout.addLayout(filter_layout)
 
-        # Splitter: feed list | entry table
+        # Splitter: feed list | right pane
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
 
         self._feed_list = QListWidget()
         self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._splitter.addWidget(self._feed_list)
 
-        self._entry_table = QTableWidget(0, 4)
-        self._entry_table.setHorizontalHeaderLabels(["Title", "Feed", "Published", "Status"])
-        header = self._entry_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        header.setStretchLastSection(False)
-        header.resizeSection(0, 400)
-        header.resizeSection(1, 140)
-        header.resizeSection(2, 120)
-        header.resizeSection(3, 60)
-        self._entry_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._entry_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._entry_table.setSortingEnabled(True)
-        self._entry_table.doubleClicked.connect(self._on_entry_double_click)
-        self._entry_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._entry_table.customContextMenuRequested.connect(self._on_entry_table_context_menu)
-        self._splitter.addWidget(self._entry_table)
+        # Right pane: unread section then read section
+        right_pane = QWidget()
+        right_layout = QVBoxLayout(right_pane)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
 
+        self._unread_header_btn = QPushButton("▼  Unread (0)")
+        self._unread_header_btn.setStyleSheet(_SECTION_HEADER_STYLE)
+        self._unread_header_btn.setFixedHeight(26)
+        self._unread_header_btn.clicked.connect(self._toggle_unread)
+        right_layout.addWidget(self._unread_header_btn)
+
+        self._unread_table = self._make_table()
+        right_layout.addWidget(self._unread_table, stretch=1)
+
+        self._read_header_btn = QPushButton("▼  Read (0)")
+        self._read_header_btn.setStyleSheet(_SECTION_HEADER_STYLE)
+        self._read_header_btn.setFixedHeight(26)
+        self._read_header_btn.clicked.connect(self._toggle_read)
+        right_layout.addWidget(self._read_header_btn)
+
+        self._read_table = self._make_table()
+        right_layout.addWidget(self._read_table, stretch=2)
+
+        self._splitter.addWidget(right_pane)
         self._splitter.setSizes([200, 600])
         layout.addWidget(self._splitter)
 
-        # Pagination controls (shown only when entries exceed page_size)
+        # Pagination controls (for read table only)
         pagination_layout = QHBoxLayout()
         pagination_layout.addStretch()
         self._prev_page_btn = QPushButton("← Prev")
@@ -281,10 +333,12 @@ class Dashboard(QMainWindow):
 
     def save_layout_state(self) -> dict:
         """Return splitter sizes and column widths for persistence."""
-        header = self._entry_table.horizontalHeader()
+        header = self._unread_table.horizontalHeader()
         return {
             "splitter_sizes": self._splitter.sizes(),
-            "column_widths": [header.sectionSize(i) for i in range(self._entry_table.columnCount())],
+            "column_widths": [header.sectionSize(i) for i in range(self._unread_table.columnCount())],
+            "unread_collapsed": self._unread_collapsed,
+            "read_collapsed": self._read_collapsed,
         }
 
     def restore_layout_state(self, state: dict) -> None:
@@ -293,10 +347,44 @@ class Dashboard(QMainWindow):
         if sizes and len(sizes) == 2:
             self._splitter.setSizes(sizes)
         widths = state.get("column_widths")
-        if widths and len(widths) == self._entry_table.columnCount():
-            header = self._entry_table.horizontalHeader()
-            for i, w in enumerate(widths):
-                header.resizeSection(i, w)
+        if widths:
+            for table in (self._unread_table, self._read_table):
+                header = table.horizontalHeader()
+                if len(widths) == table.columnCount():
+                    for i, w in enumerate(widths):
+                        header.resizeSection(i, w)
+        if state.get("unread_collapsed"):
+            self._unread_collapsed = True
+            self._unread_table.setVisible(False)
+            self._update_section_header(
+                self._unread_header_btn, "Unread", self._unread_count, True
+            )
+        if state.get("read_collapsed"):
+            self._read_collapsed = True
+            self._read_table.setVisible(False)
+            self._update_section_header(
+                self._read_header_btn, "Read", self._read_count, True
+            )
+
+    def _update_section_header(
+        self, btn: QPushButton, label: str, count: int, collapsed: bool
+    ) -> None:
+        arrow = "▶" if collapsed else "▼"
+        btn.setText(f"{arrow}  {label} ({count})")
+
+    def _toggle_unread(self) -> None:
+        self._unread_collapsed = not self._unread_collapsed
+        self._unread_table.setVisible(not self._unread_collapsed)
+        self._update_section_header(
+            self._unread_header_btn, "Unread", self._unread_count, self._unread_collapsed
+        )
+
+    def _toggle_read(self) -> None:
+        self._read_collapsed = not self._read_collapsed
+        self._read_table.setVisible(not self._read_collapsed)
+        self._update_section_header(
+            self._read_header_btn, "Read", self._read_count, self._read_collapsed
+        )
 
     def update_feeds(self, feeds: list[Feed]) -> None:
         """Refresh the feed list panel.
@@ -325,11 +413,6 @@ class Dashboard(QMainWindow):
         """Add new entries to the table and update stats.
 
         Only truly new entries are inserted; duplicates are silently ignored.
-        The table is updated incrementally (new rows prepended, evicted rows
-        removed from the bottom) rather than being rebuilt from scratch, so
-        the operation is O(k) in the number of *new* entries rather than O(n)
-        in the total number of entries.
-
         Oldest entries are evicted when :attr:`max_entries` is exceeded.
 
         Args:
@@ -340,87 +423,45 @@ class Dashboard(QMainWindow):
         if not unique_new:
             return
 
-        # Capture entries that will be evicted (oldest, at the start of the list)
-        # before modifying self.entries so we can remove their rows from the table.
         total_after = len(self.entries) + len(unique_new)
         num_evicted = max(0, total_after - self.max_entries)
-        evicted = self.entries[:num_evicted] if num_evicted > 0 else []
+        evicted = self.entries[:num_evicted] if num_evicted > 0 else []  # noqa: F841
 
         self.entries.extend(unique_new)
         if len(self.entries) > self.max_entries:
             self.entries = self.entries[-self.max_entries:]
 
         self._entries_today += len(unique_new)
-        self._insert_new_rows(unique_new, evicted)
+        self._refresh_table()
         self._update_stats()
         self._save_entries_store()
 
-    def _apply_row_style(self, row: int, entry: FeedEntry) -> str:
+    def _apply_row_style(self, row: int, entry: FeedEntry, table: QTableWidget) -> str:
         """Apply Jenkins status color to a table row. Returns status text."""
         result = jenkins_status(entry.title)
         if result:
             kw, (r, g, b) = result
             alpha = 40 if entry.seen else 80
             color = QColor(r, g, b, alpha)
-            for col in range(self._entry_table.columnCount()):
-                item = self._entry_table.item(row, col)
+            for col in range(table.columnCount()):
+                item = table.item(row, col)
                 if item:
                     item.setBackground(color)
             return kw
         return "Seen" if entry.seen else "New"
 
-    def _insert_new_rows(
-        self, new_entries: list[FeedEntry], evicted: list[FeedEntry]
-    ) -> None:
-        """Incrementally update the table by prepending new rows and removing evicted rows.
-
-        New entries are inserted at the top of the table (newest-first display
-        order) and evicted entries are removed from the bottom.  Only entries
-        that match the active filter are touched, so the method remains O(k)
-        where k is the number of new/evicted entries visible under the filter.
-
-        Args:
-            new_entries: Newly added FeedEntry objects to insert into the table.
-            evicted: FeedEntry objects that were evicted due to the max_entries cap.
-        """
-        current_filter = self._filter_combo.currentText()
-
-        def _passes_filter(entry: FeedEntry) -> bool:
-            return (
-                current_filter == "All Feeds"
-                or self._feed_name_for(entry.feed_url) == current_filter
-            )
-
-        filtered_new = [e for e in new_entries if _passes_filter(e)]
-        evicted_count = sum(1 for e in evicted if _passes_filter(e))
-
-        if not filtered_new and evicted_count == 0:
-            return
-
-        self._entry_table.setSortingEnabled(False)
-
-        # Prepend each new entry at row 0.  Inserting in forward order means
-        # the last element of filtered_new (appended most recently to
-        # self.entries) ends up at row 0, matching the reversed display order
-        # produced by _refresh_table.
-        for entry in filtered_new:
-            self._entry_table.insertRow(0)
-            self._entry_table.setItem(0, 0, QTableWidgetItem(entry.title))
-            self._entry_table.setItem(
-                0, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
-            )
-            self._entry_table.setItem(0, 2, QTableWidgetItem(entry.published))
-            self._entry_table.setItem(0, 3, QTableWidgetItem(""))
-            status = self._apply_row_style(0, entry)
-            self._entry_table.item(0, 3).setText(status)
-
-        # Remove evicted rows from the bottom of the table.
-        for _ in range(evicted_count):
-            last_row = self._entry_table.rowCount() - 1
-            if last_row >= 0:
-                self._entry_table.removeRow(last_row)
-
-        self._entry_table.setSortingEnabled(True)
+    def _populate_table(self, table: QTableWidget, entries: list[FeedEntry]) -> None:
+        """Fill *table* with *entries*, applying row styles."""
+        table.setSortingEnabled(False)
+        table.setRowCount(len(entries))
+        for row, entry in enumerate(entries):
+            table.setItem(row, 0, QTableWidgetItem(entry.title))
+            table.setItem(row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url)))
+            table.setItem(row, 2, QTableWidgetItem(entry.published))
+            table.setItem(row, 3, QTableWidgetItem(""))
+            status = self._apply_row_style(row, entry, table)
+            table.item(row, 3).setText(status)
+        table.setSortingEnabled(True)
 
     def _get_display_entries(self) -> list[FeedEntry]:
         """Return entries filtered by the active feed filter and search text.
@@ -454,39 +495,51 @@ class Dashboard(QMainWindow):
         return filtered
 
     def _refresh_table(self) -> None:
-        """Rebuild the entry table from current entries, filter, search, and current page."""
+        """Rebuild both entry tables from current entries, filter, and search."""
         filtered = self._get_display_entries()
-
         reversed_filtered = list(reversed(filtered))
-        total = len(reversed_filtered)
-        total_pages = max(1, -(-total // self.page_size))  # ceiling division
 
-        # Clamp current page to valid range
+        unread = [e for e in reversed_filtered if not e.seen]
+        read_all = [e for e in reversed_filtered if e.seen]
+
+        self._unread_count = len(unread)
+        self._read_count = len(read_all)
+
+        self._populate_table(self._unread_table, unread)
+        self._update_section_header(
+            self._unread_header_btn, "Unread", self._unread_count, self._unread_collapsed
+        )
+
+        # Paginate read table
+        total_read = len(read_all)
+        total_pages = max(1, -(-total_read // self.page_size))
         self._current_page = max(0, min(self._current_page, total_pages - 1))
-
         page_offset = self._current_page * self.page_size
-        page_entries = reversed_filtered[page_offset: page_offset + self.page_size]
+        page_read = read_all[page_offset: page_offset + self.page_size]
 
-        self._entry_table.setSortingEnabled(False)
-        self._entry_table.setRowCount(len(page_entries))
-        for row, entry in enumerate(page_entries):
-            self._entry_table.setItem(row, 0, QTableWidgetItem(entry.title))
-            self._entry_table.setItem(
-                row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url))
-            )
-            self._entry_table.setItem(row, 2, QTableWidgetItem(entry.published))
-            self._entry_table.setItem(row, 3, QTableWidgetItem(""))
-            status = self._apply_row_style(row, entry)
-            self._entry_table.item(row, 3).setText(status)
-        self._entry_table.setSortingEnabled(True)
+        self._populate_table(self._read_table, page_read)
+        self._update_section_header(
+            self._read_header_btn, "Read", self._read_count, self._read_collapsed
+        )
 
-        # Update pagination controls
-        show_pagination = total > self.page_size
+        show_pagination = total_read > self.page_size
         self._pagination_widget.setVisible(show_pagination)
         if show_pagination:
             self._page_label.setText(f"Page {self._current_page + 1} of {total_pages}")
             self._prev_page_btn.setEnabled(self._current_page > 0)
             self._next_page_btn.setEnabled(self._current_page < total_pages - 1)
+
+    def _entry_at(self, table: QTableWidget, row: int) -> FeedEntry | None:
+        """Return the FeedEntry corresponding to *row* in *table*."""
+        filtered = self._get_display_entries()
+        reversed_filtered = list(reversed(filtered))
+        if table is self._unread_table:
+            entries = [e for e in reversed_filtered if not e.seen]
+            return entries[row] if 0 <= row < len(entries) else None
+        else:
+            entries = [e for e in reversed_filtered if e.seen]
+            actual = self._current_page * self.page_size + row
+            return entries[actual] if 0 <= actual < len(entries) else None
 
     def _feed_name_for(self, url: str) -> str:
         """Look up a feed's display name by URL.
@@ -624,6 +677,7 @@ class Dashboard(QMainWindow):
         self._search_input.blockSignals(True)
         self._search_input.clear()
         self._search_input.blockSignals(False)
+        self._current_page = 0
         self._refresh_table()
 
     def _apply_filter(self, _text: str) -> None:
@@ -636,17 +690,17 @@ class Dashboard(QMainWindow):
         self._refresh_table()
 
     def _on_prev_page(self) -> None:
-        """Navigate to the previous page of entries."""
+        """Navigate to the previous page of read entries."""
         if self._current_page > 0:
             self._current_page -= 1
             self._refresh_table()
 
     def _on_next_page(self) -> None:
-        """Navigate to the next page of entries."""
+        """Navigate to the next page of read entries."""
         self._current_page += 1
         self._refresh_table()
 
-    def _on_entry_double_click(self, index: object) -> None:
+    def _on_entry_double_click(self, index: object, table: QTableWidget) -> None:
         """Open the entry link in the default browser on double-click.
 
         Marks the entry as seen and immediately persists the updated state
@@ -655,37 +709,29 @@ class Dashboard(QMainWindow):
 
         Args:
             index: The model index of the double-clicked row.
+            table: The table widget that was double-clicked.
         """
         row = index.row()  # type: ignore[union-attr]
-        reversed_filtered = list(reversed(self._get_display_entries()))
-        actual_index = self._current_page * self.page_size + row
-        if 0 <= actual_index < len(reversed_filtered):
-            entry = reversed_filtered[actual_index]
-            if entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
-                from PySide6.QtCore import QUrl
+        entry = self._entry_at(table, row)
+        if entry and entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
+            from PySide6.QtCore import QUrl
 
-                QDesktopServices.openUrl(QUrl(entry.link))
-                entry.seen = True
-                self._save_entries_store()
-                self._refresh_table()
+            QDesktopServices.openUrl(QUrl(entry.link))
+            entry.seen = True
+            self._save_entries_store()
+            self._refresh_table()
 
-    def _on_entry_table_context_menu(self, pos: QPoint) -> None:
+    def _on_entry_table_context_menu(self, pos: QPoint, table: QTableWidget) -> None:
         """Show a right-click context menu for the entry table.
-
-        The menu provides two actions:
-
-        * **Mark Selected as Seen** — marks only the currently highlighted rows.
-        * **Mark All as Seen** — marks all entries in the current filter scope.
-          When the scope is "All Feeds" the label is appended with "…" to signal
-          that a confirmation dialog will follow.
 
         Args:
             pos: The viewport-relative position of the right-click.
+            table: The table widget that was right-clicked.
         """
         menu = QMenu(self)
 
         mark_selected_action = menu.addAction("Mark Selected as Seen")
-        mark_selected_action.triggered.connect(self._mark_selected_seen)
+        mark_selected_action.triggered.connect(lambda: self._mark_selected_seen(table))
 
         menu.addSeparator()
 
@@ -697,7 +743,7 @@ class Dashboard(QMainWindow):
         mark_all_action = menu.addAction(mark_all_label)
         mark_all_action.triggered.connect(self._on_mark_all_seen_clicked)
 
-        menu.exec(self._entry_table.viewport().mapToGlobal(pos))
+        menu.exec(table.viewport().mapToGlobal(pos))
 
     def _on_mark_all_seen_clicked(self) -> None:
         """Handle the "Mark All Seen" toolbar button and context-menu action.
@@ -739,26 +785,19 @@ class Dashboard(QMainWindow):
             self._save_entries_store()
             self._refresh_table()
 
-    def _mark_selected_seen(self) -> None:
+    def _mark_selected_seen(self, table: QTableWidget) -> None:
         """Mark the currently selected table rows as seen.
 
-        Resolves which :class:`~src.models.FeedEntry` objects correspond to the
-        selected row indices (accounting for the reversed display order, the
-        active filter, and the current page offset) and marks each unseen one
-        as seen before persisting.
+        Args:
+            table: The table widget whose selection should be marked seen.
         """
-        reversed_filtered = list(reversed(self._get_display_entries()))
-        page_offset = self._current_page * self.page_size
-        selected_rows = sorted({idx.row() for idx in self._entry_table.selectedIndexes()})
-
+        selected_rows = sorted({idx.row() for idx in table.selectedIndexes()})
         changed = False
         for row in selected_rows:
-            actual_index = page_offset + row
-            if 0 <= actual_index < len(reversed_filtered):
-                entry = reversed_filtered[actual_index]
-                if not entry.seen:
-                    entry.seen = True
-                    changed = True
+            entry = self._entry_at(table, row)
+            if entry and not entry.seen:
+                entry.seen = True
+                changed = True
 
         if changed:
             self._save_entries_store()
@@ -827,4 +866,3 @@ class Dashboard(QMainWindow):
         """Reset daily stats and reschedule for the next midnight."""
         self.reset_daily_stats()
         self._schedule_daily_reset()
-

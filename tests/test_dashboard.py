@@ -56,7 +56,8 @@ class TestDashboard:
         ]
         dashboard.add_entries(entries)
         assert len(dashboard.entries) == 2
-        assert dashboard._entry_table.rowCount() == 2
+        # Both entries are unseen → appear in unread table
+        assert dashboard._unread_table.rowCount() == 2
 
     def test_record_error(self, qtbot):
         dashboard = Dashboard()
@@ -153,8 +154,8 @@ class TestDashboard:
         item = dashboard._feed_list.item(0)
         assert item is not None
         colour = item.foreground().color()
-        # Disabled feed should be gray (r ≈ g ≈ b ≈ 150), not green
-        assert colour.green() < 200  # Not bright green
+        # Disabled feed should be gray (r ≈ g ≈ b ≈ 150), not bright green
+        assert colour.green() < 200
 
     def test_set_last_poll_time(self, qtbot):
         dashboard = Dashboard()
@@ -270,6 +271,7 @@ class TestDashboard:
         dashboard._on_remove_feed_clicked()
 
         assert signals == []
+
     def test_double_click_persists_seen_state(self, qtbot, tmp_path):
         """Double-clicking an entry marks it seen and flushes the state to disk."""
         dashboard = Dashboard()
@@ -288,12 +290,13 @@ class TestDashboard:
             seen=False,
         )
         dashboard.entries = [entry]
+        dashboard._refresh_table()
 
         mock_index = MagicMock()
         mock_index.row.return_value = 0
 
         with patch("PySide6.QtGui.QDesktopServices.openUrl"):
-            dashboard._on_entry_double_click(mock_index)
+            dashboard._on_entry_double_click(mock_index, dashboard._unread_table)
 
         # The in-memory entry must be marked as seen.
         assert entry.seen is True
@@ -323,11 +326,12 @@ class TestDashboard:
             seen=False,
         )
         dashboard.entries = [entry]
+        dashboard._refresh_table()
 
         mock_index = MagicMock()
         mock_index.row.return_value = 0
 
-        dashboard._on_entry_double_click(mock_index)
+        dashboard._on_entry_double_click(mock_index, dashboard._unread_table)
 
         # Entry with no link must NOT be marked as seen, store must be unchanged.
         assert entry.seen is False
@@ -403,15 +407,15 @@ class TestDashboard:
             entry_id="e1",
         )
         dashboard.add_entries([entry])
-        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._unread_table.rowCount() == 1
 
         # Adding the same entry again must not change anything.
         dashboard.add_entries([entry])
-        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._unread_table.rowCount() == 1
         assert len(dashboard.entries) == 1
 
-    def test_insert_new_rows_prepends_newest_at_top(self, qtbot, tmp_path):
-        """Both entries should appear in the table after incremental insertion."""
+    def test_new_entries_appear_in_unread_table(self, qtbot, tmp_path):
+        """Both entries should appear in the unread table."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
 
@@ -433,50 +437,74 @@ class TestDashboard:
         ]
         dashboard.add_entries(entries)
 
-        assert dashboard._entry_table.rowCount() == 2
+        assert dashboard._unread_table.rowCount() == 2
+        assert dashboard._read_table.rowCount() == 0
         titles = {
-            dashboard._entry_table.item(r, 0).text()
-            for r in range(dashboard._entry_table.rowCount())
+            dashboard._unread_table.item(r, 0).text()
+            for r in range(dashboard._unread_table.rowCount())
         }
         assert titles == {"Older Entry", "Newer Entry"}
 
-    def test_insert_new_rows_removes_evicted_rows_from_table(self, qtbot, tmp_path):
-        """Evicted entries must be removed from the bottom of the visible table."""
+    def test_seen_entries_appear_in_read_table(self, qtbot, tmp_path):
+        """Seen entries should appear in the read table, not the unread table."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
-        dashboard.max_entries = 2
 
-        # Seed two entries.
-        initial = [
+        entries = [
             FeedEntry(
                 feed_url="https://a.com/feed",
-                title=f"Entry {i}",
-                link=f"https://a.com/{i}",
+                title="Seen Entry",
+                link="https://a.com/1",
                 published="2024-01-01",
-                entry_id=f"e{i}",
-            )
-            for i in range(2)
+                entry_id="e1",
+                seen=True,
+            ),
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Unseen Entry",
+                link="https://a.com/2",
+                published="2024-01-02",
+                entry_id="e2",
+                seen=False,
+            ),
         ]
-        dashboard.add_entries(initial)
-        assert dashboard._entry_table.rowCount() == 2
+        dashboard.entries = entries
+        dashboard._refresh_table()
 
-        # Adding one new entry evicts one old entry; table must stay at 2 rows.
-        new_entry = FeedEntry(
-            feed_url="https://a.com/feed",
-            title="New Entry",
-            link="https://a.com/2",
-            published="2024-01-03",
-            entry_id="e2",
-        )
-        dashboard.add_entries([new_entry])
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Unseen Entry"
+        assert dashboard._read_table.rowCount() == 1
+        assert dashboard._read_table.item(0, 0).text() == "Seen Entry"
 
-        assert len(dashboard.entries) == 2
-        assert dashboard._entry_table.rowCount() == 2
-        # Newest entry must be at the top.
-        assert dashboard._entry_table.item(0, 0).text() == "New Entry"
+    def test_entries_move_to_read_after_mark_seen(self, qtbot, tmp_path):
+        """After marking an entry seen, it moves from unread to read table."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+        dashboard._entries_store_location = tmp_path / "store.json"
 
-    def test_insert_new_rows_respects_active_filter(self, qtbot, tmp_path):
-        """Only entries matching the active filter should be inserted into the table."""
+        entries = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Entry A",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="e1",
+                seen=False,
+            ),
+        ]
+        dashboard.entries = entries
+        dashboard._refresh_table()
+
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._read_table.rowCount() == 0
+
+        dashboard._do_mark_all_seen(None)
+
+        assert dashboard._unread_table.rowCount() == 0
+        assert dashboard._read_table.rowCount() == 1
+
+    def test_entries_respect_active_filter(self, qtbot, tmp_path):
+        """Only entries matching the active filter should appear in tables."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
 
@@ -505,11 +533,66 @@ class TestDashboard:
         ]
         dashboard.add_entries(entries)
 
-        # Only the Feed A entry should appear in the filtered table.
-        assert dashboard._entry_table.rowCount() == 1
-        assert dashboard._entry_table.item(0, 0).text() == "Feed A Entry"
+        # Only the Feed A entry should appear in the filtered unread table.
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Feed A Entry"
         # Both entries are still in memory.
         assert len(dashboard.entries) == 2
+
+    def test_section_headers_show_counts(self, qtbot):
+        """Section header buttons should reflect current entry counts."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        entries = [
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Unseen",
+                link="https://a.com/1",
+                published="2024-01-01",
+                entry_id="e1",
+                seen=False,
+            ),
+            FeedEntry(
+                feed_url="https://a.com/feed",
+                title="Seen",
+                link="https://a.com/2",
+                published="2024-01-02",
+                entry_id="e2",
+                seen=True,
+            ),
+        ]
+        dashboard.entries = entries
+        dashboard._refresh_table()
+
+        assert "1" in dashboard._unread_header_btn.text()
+        assert "1" in dashboard._read_header_btn.text()
+
+    def test_toggle_unread_hides_table(self, qtbot):
+        """Clicking the unread header toggles table visibility."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        assert not dashboard._unread_table.isHidden()
+        dashboard._toggle_unread()
+        assert dashboard._unread_table.isHidden()
+        assert "▶" in dashboard._unread_header_btn.text()
+
+        dashboard._toggle_unread()
+        assert not dashboard._unread_table.isHidden()
+        assert "▼" in dashboard._unread_header_btn.text()
+
+    def test_toggle_read_hides_table(self, qtbot):
+        """Clicking the read header toggles table visibility."""
+        dashboard = Dashboard()
+        qtbot.addWidget(dashboard)
+
+        assert not dashboard._read_table.isHidden()
+        dashboard._toggle_read()
+        assert dashboard._read_table.isHidden()
+
+        dashboard._toggle_read()
+        assert not dashboard._read_table.isHidden()
 
 
 class TestMarkAsSeen:
@@ -683,11 +766,11 @@ class TestMarkAsSeen:
         dashboard.update_feeds(feeds)
         dashboard._refresh_table()
 
-        # Select row 0 (which maps to the last entry in reversed order)
-        dashboard._entry_table.selectRow(0)
-        dashboard._mark_selected_seen()
+        # Select row 0 from the unread table
+        dashboard._unread_table.selectRow(0)
+        dashboard._mark_selected_seen(dashboard._unread_table)
 
-        # Exactly one entry should be marked seen — the one at display row 0
+        # Exactly one entry should be marked seen
         seen_entries = [e for e in dashboard.entries if e.seen]
         assert len(seen_entries) == 1
 
@@ -700,9 +783,9 @@ class TestMarkAsSeen:
         dashboard.entries = self._make_entries()
         dashboard._refresh_table()
         # No row selected
-        dashboard._entry_table.clearSelection()
+        dashboard._unread_table.clearSelection()
 
-        dashboard._mark_selected_seen()
+        dashboard._mark_selected_seen(dashboard._unread_table)
 
         assert not store_path.exists()
         assert all(not e.seen for e in dashboard.entries)
@@ -717,9 +800,10 @@ class TestMarkAsSeen:
 
 
 class TestPagination:
-    """Tests for the entry table pagination feature."""
+    """Tests for the read entry table pagination feature."""
 
-    def _make_entries(self, count: int, feed_url: str = "https://a.com/feed") -> list[FeedEntry]:
+    def _make_seen_entries(self, count: int, feed_url: str = "https://a.com/feed") -> list[FeedEntry]:
+        """Create seen entries that will appear in the read table."""
         return [
             FeedEntry(
                 feed_url=feed_url,
@@ -727,35 +811,36 @@ class TestPagination:
                 link=f"https://a.com/{i}",
                 published="2024-01-01",
                 entry_id=f"e{i}",
+                seen=True,
             )
             for i in range(count)
         ]
 
     def test_pagination_hidden_when_entries_fit_in_one_page(self, qtbot, tmp_path):
-        """Pagination controls should be hidden when total entries <= page_size."""
+        """Pagination controls should be hidden when read entries <= page_size."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         dashboard._entries_store_location = tmp_path / "store.json"
         dashboard.page_size = 100
 
-        dashboard.entries = self._make_entries(50)
+        dashboard.entries = self._make_seen_entries(50)
         dashboard._refresh_table()
 
         assert dashboard._pagination_widget.isHidden()
-        assert dashboard._entry_table.rowCount() == 50
+        assert dashboard._read_table.rowCount() == 50
 
     def test_pagination_shown_when_entries_exceed_page_size(self, qtbot, tmp_path):
-        """Pagination controls should be visible when total entries > page_size."""
+        """Pagination controls should be visible when read entries > page_size."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         dashboard._entries_store_location = tmp_path / "store.json"
         dashboard.page_size = 10
 
-        dashboard.entries = self._make_entries(25)
+        dashboard.entries = self._make_seen_entries(25)
         dashboard._refresh_table()
 
         assert not dashboard._pagination_widget.isHidden()
-        assert dashboard._entry_table.rowCount() == 10
+        assert dashboard._read_table.rowCount() == 10
 
     def test_first_page_shows_correct_entries(self, qtbot, tmp_path):
         """First page should show the most recent entries (reversed order)."""
@@ -765,12 +850,12 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         # Page 0 of reversed [e11..e0] → titles {Entry 7..Entry 11}
-        assert dashboard._entry_table.rowCount() == 5
-        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        assert dashboard._read_table.rowCount() == 5
+        titles = {dashboard._read_table.item(r, 0).text() for r in range(5)}
         assert titles == {"Entry 7", "Entry 8", "Entry 9", "Entry 10", "Entry 11"}
 
     def test_next_page_shows_next_entries(self, qtbot, tmp_path):
@@ -781,15 +866,15 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         dashboard._on_next_page()
 
         assert dashboard._current_page == 1
-        assert dashboard._entry_table.rowCount() == 5
+        assert dashboard._read_table.rowCount() == 5
         # Page 1 of reversed [e11..e0] → offset 5..9 → {Entry 2..Entry 6}
-        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        titles = {dashboard._read_table.item(r, 0).text() for r in range(5)}
         assert titles == {"Entry 2", "Entry 3", "Entry 4", "Entry 5", "Entry 6"}
 
     def test_prev_page_navigates_back(self, qtbot, tmp_path):
@@ -800,14 +885,14 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 1
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         dashboard._on_prev_page()
 
         assert dashboard._current_page == 0
         # Page 0 of reversed [e11..e0] → titles {Entry 7..Entry 11}
-        titles = {dashboard._entry_table.item(r, 0).text() for r in range(5)}
+        titles = {dashboard._read_table.item(r, 0).text() for r in range(5)}
         assert titles == {"Entry 7", "Entry 8", "Entry 9", "Entry 10", "Entry 11"}
 
     def test_prev_page_no_op_on_first_page(self, qtbot, tmp_path):
@@ -818,7 +903,7 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
         dashboard._on_prev_page()
 
@@ -832,7 +917,7 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         assert dashboard._page_label.text() == "Page 1 of 3"
@@ -848,7 +933,7 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         assert not dashboard._prev_page_btn.isEnabled()
@@ -862,7 +947,7 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(10)
+        dashboard.entries = self._make_seen_entries(10)
         # Exactly 2 pages; navigate to last
         dashboard._on_next_page()
         dashboard._refresh_table()
@@ -880,7 +965,7 @@ class TestPagination:
 
         feeds = [Feed(url="https://a.com/feed", name="Feed A")]
         dashboard.update_feeds(feeds)
-        dashboard.entries = self._make_entries(25)
+        dashboard.entries = self._make_seen_entries(25)
 
         dashboard._filter_combo.setCurrentText("Feed A")
 
@@ -894,7 +979,7 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 4  # would be out of range for 12 entries (3 pages)
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         dashboard._refresh_table()
 
         # Should have been clamped to last valid page (page 2)
@@ -908,63 +993,43 @@ class TestPagination:
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        dashboard.entries = self._make_seen_entries(12)
         # Navigate to last page (page 2, index 2)
         dashboard._on_next_page()
         dashboard._on_next_page()
 
         # 12 entries, page_size=5: pages 0,1 have 5; page 2 has 2
-        assert dashboard._entry_table.rowCount() == 2
+        assert dashboard._read_table.rowCount() == 2
 
     def test_double_click_on_second_page_resolves_correct_entry(self, qtbot, tmp_path):
-        """Double-clicking a row on page 2 should mark an entry from page 2 as seen."""
+        """Double-clicking a row on read page 2 should open the entry from page 2."""
         dashboard = Dashboard()
         qtbot.addWidget(dashboard)
         dashboard._entries_store_location = tmp_path / "store.json"
         dashboard.page_size = 5
         dashboard._current_page = 0
 
-        dashboard.entries = self._make_entries(12)
+        entries = self._make_seen_entries(12)
+        # Give each entry a distinct URL matching its id
+        for e in entries:
+            e.link = f"https://a.com/{e.entry_id}"
+        dashboard.entries = entries
         dashboard._on_next_page()  # now on page 1
 
-        # Page 1 contains reversed_filtered[5..9] = e6, e5, e4, e3, e2
+        # Page 1 of read table (reversed seen entries, offset 5..9) = e6, e5, e4, e3, e2
         page1_ids = {"e2", "e3", "e4", "e5", "e6"}
 
         mock_index = MagicMock()
         mock_index.row.return_value = 0
 
-        with patch("PySide6.QtGui.QDesktopServices.openUrl"):
-            dashboard._on_entry_double_click(mock_index)
+        opened_urls = []
+        with patch("PySide6.QtGui.QDesktopServices.openUrl", side_effect=lambda u: opened_urls.append(u.toString())):
+            dashboard._on_entry_double_click(mock_index, dashboard._read_table)
 
-        # Exactly one entry from page 1 should be marked as seen
-        seen_entries = [e for e in dashboard.entries if e.seen]
-        assert len(seen_entries) == 1
-        assert seen_entries[0].entry_id in page1_ids
-
-    def test_mark_selected_seen_on_second_page(self, qtbot, tmp_path):
-        """_mark_selected_seen should correctly map rows on page 2 to entries."""
-        dashboard = Dashboard()
-        qtbot.addWidget(dashboard)
-        dashboard._entries_store_location = tmp_path / "store.json"
-        dashboard.page_size = 5
-        dashboard._current_page = 0
-
-        feeds = [Feed(url="https://a.com/feed", name="Feed A")]
-        dashboard.update_feeds(feeds)
-        dashboard.entries = self._make_entries(12)
-        dashboard._on_next_page()  # now on page 1
-        dashboard._refresh_table()
-
-        # Page 1 contains reversed_filtered[5..9] = e6, e5, e4, e3, e2
-        page1_ids = {"e2", "e3", "e4", "e5", "e6"}
-
-        dashboard._entry_table.selectRow(0)
-        dashboard._mark_selected_seen()
-
-        # Exactly one entry from page 1 should be marked as seen
-        seen_entries = [e for e in dashboard.entries if e.seen]
-        assert len(seen_entries) == 1
-        assert seen_entries[0].entry_id in page1_ids
+        assert len(opened_urls) == 1
+        # The opened URL should correspond to an entry on page 1
+        opened_id = opened_urls[0].split("/")[-1]
+        assert opened_id in page1_ids
 
 
 class TestEntrySearch:
@@ -1024,9 +1089,9 @@ class TestEntrySearch:
         dashboard._search_input.setText("python")
         dashboard._refresh_table()
 
-        # Only "Python release notes" matches by title
-        assert dashboard._entry_table.rowCount() == 1
-        assert dashboard._entry_table.item(0, 0).text() == "Python release notes"
+        # Only "Python release notes" matches by title (all unseen → unread table)
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Python release notes"
 
     def test_search_is_case_insensitive(self, qtbot):
         """Search should be case-insensitive."""
@@ -1039,8 +1104,8 @@ class TestEntrySearch:
         dashboard._search_input.setText("RUST")
         dashboard._refresh_table()
 
-        assert dashboard._entry_table.rowCount() == 1
-        assert dashboard._entry_table.item(0, 0).text() == "Rust 1.75 released"
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Rust 1.75 released"
 
     def test_search_empty_shows_all_entries(self, qtbot):
         """Clearing the search box shows all entries."""
@@ -1055,10 +1120,10 @@ class TestEntrySearch:
 
         dashboard._search_input.setText("rust")
         dashboard._refresh_table()
-        assert dashboard._entry_table.rowCount() == 1
+        assert dashboard._unread_table.rowCount() == 1
 
         dashboard._search_input.clear()
-        assert dashboard._entry_table.rowCount() == 3
+        assert dashboard._unread_table.rowCount() == 3
 
     def test_search_content_off_does_not_match_summary_only(self, qtbot):
         """Without 'Include content', summary-only matches are excluded."""
@@ -1076,7 +1141,7 @@ class TestEntrySearch:
         dashboard._search_input.setText("borrow")
         dashboard._refresh_table()
 
-        assert dashboard._entry_table.rowCount() == 0
+        assert dashboard._unread_table.rowCount() == 0
 
     def test_search_content_on_matches_summary(self, qtbot):
         """With 'Include content' checked, summary text is also searched."""
@@ -1094,8 +1159,8 @@ class TestEntrySearch:
         dashboard._search_input.setText("borrow")
         dashboard._refresh_table()
 
-        assert dashboard._entry_table.rowCount() == 1
-        assert dashboard._entry_table.item(0, 0).text() == "Rust 1.75 released"
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Rust 1.75 released"
 
     def test_search_content_on_matches_title_and_summary(self, qtbot):
         """With 'Include content' checked, entries matching title OR summary are shown."""
@@ -1113,7 +1178,7 @@ class TestEntrySearch:
         dashboard._search_input.setText("python")
         dashboard._refresh_table()
 
-        assert dashboard._entry_table.rowCount() == 2
+        assert dashboard._unread_table.rowCount() == 2
 
     def test_feed_filter_change_resets_search_text(self, qtbot):
         """Changing the feed filter combo should clear the search input."""
@@ -1151,8 +1216,8 @@ class TestEntrySearch:
         dashboard._refresh_table()
 
         # Feed A has 2 entries; only "Python release notes" matches "python" in title
-        assert dashboard._entry_table.rowCount() == 1
-        assert dashboard._entry_table.item(0, 0).text() == "Python release notes"
+        assert dashboard._unread_table.rowCount() == 1
+        assert dashboard._unread_table.item(0, 0).text() == "Python release notes"
 
     def test_get_display_entries_respects_search(self, qtbot):
         """_get_display_entries returns only entries matching the active search."""
