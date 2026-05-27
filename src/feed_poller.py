@@ -24,6 +24,7 @@ import datetime
 import hashlib
 import http.client
 import logging
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -343,12 +344,16 @@ class FeedPoller(QThread):
         # the poller thread indefinitely and prevent clean shutdown.
         # Pass etag/modified so feedparser sends conditional-GET headers and
         # the server can respond with 304 when nothing has changed.
-        parsed = feedparser.parse(
-            feed.url,
-            socket_timeout=30,
-            etag=feed.etag,
-            modified=feed.modified,
-        )
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(30)
+        try:
+            parsed = feedparser.parse(
+                feed.url,
+                etag=feed.etag,
+                modified=feed.modified,
+            )
+        finally:
+            socket.setdefaulttimeout(old_timeout)
         etag = getattr(parsed, "etag", None)
         modified = getattr(parsed, "modified", None)
         if etag:
