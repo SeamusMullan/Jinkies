@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.credential_store import delete_credentials, get_credentials, store_credentials
+from src.feed_discover import discover_feeds
 from src.feed_import import import_local_feed, import_opml
 from src.models import Feed
 from src.theme import load_theme
@@ -198,9 +199,23 @@ class SettingsDialog(QDialog):
             elif event_type == "error":
                 self._error_sound.setText(path)
 
+    def _existing_groups(self) -> list[str]:
+        """Return a sorted, deduplicated list of group names from the feed list."""
+        groups: list[str] = []
+        seen: set[str] = set()
+        for i in range(self._feed_list.count()):
+            item = self._feed_list.item(i)
+            if item:
+                feed = item.data(Qt.ItemDataRole.UserRole)
+                g = getattr(feed, "group", None)
+                if g and g not in seen:
+                    groups.append(g)
+                    seen.add(g)
+        return sorted(groups)
+
     def _add_feed(self) -> None:
         """Show a dialog to add a new feed."""
-        dialog = FeedEditDialog(parent=self)
+        dialog = FeedEditDialog(existing_groups=self._existing_groups(), parent=self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             url = dialog.url_edit.text()
             username = dialog.auth_user_edit.text() or None
@@ -214,6 +229,7 @@ class SettingsDialog(QDialog):
                 url=url,
                 name=dialog.name_edit.text(),
                 poll_interval_secs=raw_interval if raw_interval > 0 else None,
+                group=dialog.group_combo.currentText().strip() or None,
             )
             item = QListWidgetItem(f"{feed.name} — {feed.url}")
             item.setData(Qt.ItemDataRole.UserRole, feed)
@@ -226,12 +242,17 @@ class SettingsDialog(QDialog):
             return
         feed = current.data(Qt.ItemDataRole.UserRole)
         old_url = feed.url
-        dialog = FeedEditDialog(feed=feed, parent=self)
+        dialog = FeedEditDialog(
+            feed=feed,
+            existing_groups=self._existing_groups(),
+            parent=self,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             feed.name = dialog.name_edit.text()
             feed.url = dialog.url_edit.text()
             raw_interval = dialog.poll_interval_spin.value()
             feed.poll_interval_secs = raw_interval if raw_interval > 0 else None
+            feed.group = dialog.group_combo.currentText().strip() or None
 
             username = dialog.auth_user_edit.text() or None
             token = dialog.auth_token_edit.text() or None
@@ -527,6 +548,88 @@ class ImportPreviewDialog(QDialog):
         return self.feeds
 
 
+class _DiscoverWorker(QThread):
+    """Background thread that runs feed discovery without blocking the UI.
+
+    Signals:
+        results_ready: Emitted with the list of discovered feed dicts when done.
+    """
+
+    results_ready: Signal = Signal(list)
+
+    def __init__(self, url: str, parent: QThread | None = None) -> None:
+        """Initialise with the URL to probe.
+
+        Args:
+            url: Website URL to discover feeds from.
+            parent: Optional parent QObject.
+        """
+        super().__init__(parent)
+        self._url = url
+
+    def run(self) -> None:
+        """Fetch and parse *url*, then emit results_ready."""
+        results = discover_feeds(self._url)
+        self.results_ready.emit(results)
+
+
+class _DiscoverResultDialog(QDialog):
+    """Show a list of discovered feeds and let the user pick one.
+
+    Attributes:
+        selected_url: The URL the user chose, or empty string if cancelled.
+        selected_title: The title of the chosen feed, or empty string.
+    """
+
+    def __init__(
+        self,
+        feeds: list[dict[str, str]],
+        parent: QDialog | None = None,
+    ) -> None:
+        """Initialise with the discovered feed list.
+
+        Args:
+            feeds: List of dicts with keys ``url``, ``title``, ``type``.
+            parent: Optional parent widget.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Discovered Feeds")
+        self.setMinimumWidth(480)
+        self.selected_url = ""
+        self.selected_title = ""
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Select a feed to add:"))
+
+        self._list = QListWidget()
+        for feed in feeds:
+            label = feed["title"] or feed["url"]
+            item = QListWidgetItem(f"{label}  [{feed['type'].upper()}]")
+            item.setData(Qt.ItemDataRole.UserRole, feed)
+            self._list.addItem(item)
+        if self._list.count():
+            self._list.setCurrentRow(0)
+        self._list.itemDoubleClicked.connect(self._accept_selection)
+        layout.addWidget(self._list)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._accept_selection)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _accept_selection(self) -> None:
+        """Store the selected feed's URL and title then accept."""
+        item = self._list.currentItem()
+        if not item:
+            return
+        feed = item.data(Qt.ItemDataRole.UserRole)
+        self.selected_url = feed["url"]
+        self.selected_title = feed["title"]
+        self.accept()
+
+
 class FeedEditDialog(QDialog):
     """Dialog for adding or editing a single feed.
 
@@ -535,17 +638,21 @@ class FeedEditDialog(QDialog):
         url_edit: Text input for the feed URL.
         auth_user_edit: Text input for auth username.
         auth_token_edit: Text input for auth token/password.
+        group_combo: Editable combo box for the feed group name.
     """
 
     def __init__(
         self,
         feed: Feed | None = None,
+        existing_groups: list[str] | None = None,
         parent: QDialog | None = None,
     ) -> None:
         """Initialize the feed edit dialog.
 
         Args:
             feed: Existing feed to edit, or None for a new feed.
+            existing_groups: List of group names already in use, for the combo
+                box suggestions.
             parent: Optional parent widget.
         """
         super().__init__(parent)
@@ -553,6 +660,12 @@ class FeedEditDialog(QDialog):
         layout = QFormLayout(self)
 
         self.name_edit = QLineEdit()
+        self.group_combo = QComboBox()
+        self.group_combo.setEditable(True)
+        self.group_combo.addItem("")  # blank = no group
+        for g in (existing_groups or []):
+            if g:
+                self.group_combo.addItem(g)
         self.url_edit = QLineEdit()
         self.poll_interval_spin = QSpinBox()
         self.poll_interval_spin.setRange(0, 86400)
@@ -568,14 +681,25 @@ class FeedEditDialog(QDialog):
             self.name_edit.setText(feed.name)
             self.url_edit.setText(feed.url)
             self.poll_interval_spin.setValue(feed.poll_interval_secs or 0)
+            self.group_combo.setCurrentText(feed.group or "")
             creds = get_credentials(feed.url)
             if creds:
                 self.auth_user_edit.setText(creds[0])
                 self.auth_token_edit.setText(creds[1])
 
+        url_row = QHBoxLayout()
+        url_row.addWidget(self.url_edit)
+        self._discover_btn = QPushButton("Discover…")
+        self._discover_btn.setToolTip(
+            "Auto-detect feeds from a website URL"
+        )
+        self._discover_btn.clicked.connect(self._discover_feeds)
+        url_row.addWidget(self._discover_btn)
+
         layout.addRow("Name:", self.name_edit)
+        layout.addRow("Group:", self.group_combo)
         layout.addRow("Poll interval:", self.poll_interval_spin)
-        layout.addRow("URL:", self.url_edit)
+        layout.addRow("URL:", url_row)
         layout.addRow("Auth User:", self.auth_user_edit)
         layout.addRow("Auth Token:", self.auth_token_edit)
 
@@ -589,6 +713,50 @@ class FeedEditDialog(QDialog):
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _discover_feeds(self) -> None:
+        """Run feed discovery on the entered URL in a background thread.
+
+        Populates ``url_edit`` (and optionally ``name_edit``) when the user
+        selects a result, or shows an information dialog if nothing is found.
+        """
+        url = self.url_edit.text().strip()
+        if not url:
+            QMessageBox.information(self, "Discover Feeds", "Enter a URL first.")
+            return
+
+        self._discover_btn.setEnabled(False)
+        self._discover_btn.setText("Discovering…")
+
+        self._worker = _DiscoverWorker(url, parent=self)
+        self._worker.results_ready.connect(self._on_discover_results)
+        self._worker.finished.connect(
+            lambda: (
+                self._discover_btn.setEnabled(True),
+                self._discover_btn.setText("Discover…"),
+            )
+        )
+        self._worker.start()
+
+    def _on_discover_results(self, feeds: list[dict[str, str]]) -> None:
+        """Handle results emitted by :class:`_DiscoverWorker`.
+
+        Args:
+            feeds: Discovered feed dicts, may be empty.
+        """
+        if not feeds:
+            QMessageBox.information(
+                self,
+                "Discover Feeds",
+                "No feeds found at that URL.",
+            )
+            return
+
+        dialog = _DiscoverResultDialog(feeds, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.url_edit.setText(dialog.selected_url)
+            if dialog.selected_title and not self.name_edit.text().strip():
+                self.name_edit.setText(dialog.selected_title)
 
     def _check_connectivity(self) -> None:
         """Perform an optional HEAD-request connectivity check on the entered URL.
