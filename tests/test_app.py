@@ -59,6 +59,10 @@ def _make_app(icon_path="", state=None, config=None):
     notifier_mock = app.notifier
     dashboard_mock = app.dashboard
 
+    # _save_state serializes dashboard.save_layout_state() to JSON; ensure it
+    # returns something serializable so tests that trigger _save_state don't fail.
+    dashboard_mock.save_layout_state.return_value = {}
+
     return app, audio_mock, notifier_mock, dashboard_mock
 
 

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -24,12 +25,14 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QPushButton,
     QSplitter,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -42,24 +45,6 @@ from src.notifier import jenkins_status
 if TYPE_CHECKING:
     from src.models import Feed
 
-
-_SECTION_HEADER_STYLE = """
-    QPushButton {
-        text-align: left;
-        background-color: #2a2a2a;
-        color: #999999;
-        border: none;
-        border-bottom: 1px solid #3a3a3a;
-        border-top: 1px solid #3a3a3a;
-        padding: 4px 8px;
-        font-weight: bold;
-        font-size: 11px;
-    }
-    QPushButton:hover {
-        background-color: #333333;
-        color: #cccccc;
-    }
-"""
 
 
 class Dashboard(QMainWindow):
@@ -95,6 +80,7 @@ class Dashboard(QMainWindow):
         self.setWindowTitle("Jinkies — Feed Monitor")
         self.setMinimumSize(800, 500)
         self.entries: list[FeedEntry] = []
+        self._feeds: list[Feed] = []
         self.max_entries: int = 10_000
         self.page_size: int = 100
         self._current_page: int = 0
@@ -120,6 +106,7 @@ class Dashboard(QMainWindow):
         self._feed_errors: dict[str, str] = {}
         self._feed_backoff: dict[str, int] = {}  # url → backoff seconds
 
+        self._setup_menubar()
         self._setup_toolbar()
         self._setup_central()
         self._setup_statusbar()
@@ -179,6 +166,29 @@ class Dashboard(QMainWindow):
                 },
                 store,
             )
+
+    def _setup_menubar(self) -> None:
+        """Create the menubar with File and View menus."""
+        menubar = self.menuBar()
+
+        file_menu = menubar.addMenu("&File")
+        self._import_feeds_menu_action = file_menu.addAction("Import Feeds…")
+        self._import_feeds_menu_action.setShortcut(QKeySequence("Ctrl+I"))
+        self._import_feeds_menu_action.setToolTip("Import feeds from an OPML file")
+        self._import_feeds_menu_action.triggered.connect(self.import_feeds_requested.emit)
+
+        self._export_feeds_action = file_menu.addAction("Export Feeds…")
+        self._export_feeds_action.setShortcut(QKeySequence("Ctrl+E"))
+        self._export_feeds_action.setToolTip("Export current feeds as an OPML file")
+        self._export_feeds_action.triggered.connect(self._on_export_feeds)
+
+        view_menu = menubar.addMenu("&View")
+        self._toggle_preview_action = view_menu.addAction("Toggle Preview Pane")
+        self._toggle_preview_action.setCheckable(True)
+        self._toggle_preview_action.setChecked(True)
+        self._toggle_preview_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        self._toggle_preview_action.setToolTip("Show or hide the entry preview pane")
+        self._toggle_preview_action.toggled.connect(self._on_toggle_preview)
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -278,14 +288,17 @@ class Dashboard(QMainWindow):
         self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._splitter.addWidget(self._feed_list)
 
-        # Right pane: unread section then read section
-        right_pane = QWidget()
-        right_layout = QVBoxLayout(right_pane)
+        # Right pane: vertical splitter with (top) tables pane and (bottom) preview pane
+        self._right_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        # Tables pane: unread section then read section
+        tables_pane = QWidget()
+        right_layout = QVBoxLayout(tables_pane)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
         self._unread_header_btn = QPushButton("▼  Unread (0)")
-        self._unread_header_btn.setStyleSheet(_SECTION_HEADER_STYLE)
+        self._unread_header_btn.setProperty("sectionHeader", True)
         self._unread_header_btn.setFixedHeight(26)
         self._unread_header_btn.clicked.connect(self._toggle_unread)
         right_layout.addWidget(self._unread_header_btn)
@@ -294,7 +307,7 @@ class Dashboard(QMainWindow):
         right_layout.addWidget(self._unread_table, stretch=1)
 
         self._read_header_btn = QPushButton("▼  Read (0)")
-        self._read_header_btn.setStyleSheet(_SECTION_HEADER_STYLE)
+        self._read_header_btn.setProperty("sectionHeader", True)
         self._read_header_btn.setFixedHeight(26)
         self._read_header_btn.clicked.connect(self._toggle_read)
         right_layout.addWidget(self._read_header_btn)
@@ -302,7 +315,24 @@ class Dashboard(QMainWindow):
         self._read_table = self._make_table()
         right_layout.addWidget(self._read_table, stretch=2)
 
-        self._splitter.addWidget(right_pane)
+        self._right_splitter.addWidget(tables_pane)
+
+        # Preview pane
+        self._preview_pane = QTextEdit()
+        self._preview_pane.setReadOnly(True)
+        self._preview_pane.setPlaceholderText("Select an entry to preview")
+        self._right_splitter.addWidget(self._preview_pane)
+        self._right_splitter.setSizes([500, 200])
+
+        # Connect selection signals to update preview
+        self._unread_table.selectionModel().selectionChanged.connect(
+            lambda: self._on_table_selection_changed(self._unread_table)
+        )
+        self._read_table.selectionModel().selectionChanged.connect(
+            lambda: self._on_table_selection_changed(self._read_table)
+        )
+
+        self._splitter.addWidget(self._right_splitter)
         self._splitter.setSizes([200, 600])
         layout.addWidget(self._splitter)
 
@@ -336,6 +366,8 @@ class Dashboard(QMainWindow):
         header = self._unread_table.horizontalHeader()
         return {
             "splitter_sizes": self._splitter.sizes(),
+            "right_splitter_sizes": self._right_splitter.sizes(),
+            "preview_visible": self._preview_pane.isVisible(),
             "column_widths": [header.sectionSize(i) for i in range(self._unread_table.columnCount())],
             "unread_collapsed": self._unread_collapsed,
             "read_collapsed": self._read_collapsed,
@@ -346,6 +378,12 @@ class Dashboard(QMainWindow):
         sizes = state.get("splitter_sizes")
         if sizes and len(sizes) == 2:
             self._splitter.setSizes(sizes)
+        right_sizes = state.get("right_splitter_sizes")
+        if right_sizes and len(right_sizes) == 2:
+            self._right_splitter.setSizes(right_sizes)
+        preview_visible = state.get("preview_visible", True)
+        self._preview_pane.setVisible(preview_visible)
+        self._toggle_preview_action.setChecked(preview_visible)
         widths = state.get("column_widths")
         if widths:
             for table in (self._unread_table, self._read_table):
@@ -386,12 +424,37 @@ class Dashboard(QMainWindow):
             self._read_header_btn, "Read", self._read_count, self._read_collapsed
         )
 
+    def _on_table_selection_changed(self, table: QTableWidget) -> None:
+        """Update the preview pane when the selection changes in a table."""
+        selected = table.selectedItems()
+        if not selected:
+            return
+        row = table.currentRow()
+        entry = self._entry_at(table, row)
+        self._update_preview(entry)
+
+    def _update_preview(self, entry: object) -> None:
+        """Populate the preview pane with the entry's summary, or clear it."""
+        if entry is None:
+            self._preview_pane.clear()
+            return
+        summary = getattr(entry, "summary", "") or ""
+        if "<" in summary:
+            self._preview_pane.setHtml(summary)
+        else:
+            self._preview_pane.setPlainText(summary)
+
+    def _on_toggle_preview(self, checked: bool) -> None:
+        """Show or hide the preview pane based on the menu action state."""
+        self._preview_pane.setVisible(checked)
+
     def update_feeds(self, feeds: list[Feed]) -> None:
         """Refresh the feed list panel.
 
         Args:
             feeds: Current list of Feed objects.
         """
+        self._feeds = list(feeds)
         self._feed_list.clear()
         self._filter_combo.clear()
         self._filter_combo.addItem("All Feeds")
@@ -802,6 +865,35 @@ class Dashboard(QMainWindow):
         if changed:
             self._save_entries_store()
             self._refresh_table()
+
+    def _on_export_feeds(self) -> None:
+        """Export the current feed list to an OPML file chosen by the user.
+
+        Opens a save-file dialog, then writes an OPML 2.0 document containing
+        all currently configured feeds.  A confirmation message is shown on
+        success.
+        """
+        from src.feed_import import export_opml
+
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Feeds",
+            "feeds.opml",
+            "OPML Files (*.opml);;All Files (*)",
+        )
+        if not path:
+            return
+        try:
+            export_opml(self._feeds, path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", str(exc))
+            return
+        count = len(self._feeds)
+        QMessageBox.information(
+            self,
+            "Export Complete",
+            f"Exported {count} feed{'s' if count != 1 else ''} to {path}",
+        )
 
     def _on_remove_feed_clicked(self) -> None:
         """Emit remove_feed_requested with the indices of all selected feeds.
