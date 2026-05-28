@@ -6,6 +6,8 @@ local Atom/XML feed files.
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as StdET
+from email.utils import formatdate
 from pathlib import Path
 from xml.etree.ElementTree import Element
 
@@ -40,6 +42,44 @@ def import_opml(path: str | Path) -> list[Feed]:
     feeds: list[Feed] = []
     _collect_opml_outlines(root, feeds)
     return feeds
+
+
+def export_opml(feeds: list[Feed], path: str) -> None:
+    """Export a list of feeds as an OPML 2.0 file.
+
+    Writes a valid OPML 2.0 document to *path*.  Each feed is written as an
+    ``<outline>`` element with ``text``, ``title``, ``type`` and ``xmlUrl``
+    attributes.
+
+    Args:
+        feeds: List of Feed objects to export.
+        path: Destination file path for the OPML file.
+    """
+    opml = StdET.Element("opml", {"version": "2.0"})
+
+    head = StdET.SubElement(opml, "head")
+    title_el = StdET.SubElement(head, "title")
+    title_el.text = "Jinkies Feed Export"
+    date_el = StdET.SubElement(head, "dateCreated")
+    date_el.text = formatdate(localtime=True)
+
+    body = StdET.SubElement(opml, "body")
+    for feed in feeds:
+        StdET.SubElement(
+            body,
+            "outline",
+            {
+                "text": feed.name,
+                "title": feed.name,
+                "type": "rss",
+                "xmlUrl": feed.url,
+            },
+        )
+
+    tree = StdET.ElementTree(opml)
+    StdET.indent(tree, space="  ")
+    with open(path, "wb") as f:
+        tree.write(f, encoding="UTF-8", xml_declaration=True)
 
 
 def _collect_opml_outlines(element: Element, feeds: list[Feed]) -> None:
