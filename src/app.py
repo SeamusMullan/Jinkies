@@ -16,7 +16,8 @@ if sys.platform == "win32":
 else:
     import fcntl
 
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -156,6 +157,7 @@ class JinkiesApp:
         self.app.setQuitOnLastWindowClosed(False)
 
         icon_path = _get_icon_path()
+        self._icon_path = icon_path
         if icon_path:
             self.app.setWindowIcon(QIcon(icon_path))
 
@@ -225,6 +227,8 @@ class JinkiesApp:
         self.dashboard.import_feeds_requested.connect(self._on_import_feeds)
         self.dashboard.settings_requested.connect(self._on_settings)
         self.dashboard.pause_requested.connect(self._on_pause_toggle)
+        self.dashboard.reorder_feeds_requested.connect(self._on_reorder_feeds)
+        self.dashboard.unread_count_changed.connect(self._update_tray_icon)
 
         # Track which feeds have already produced an error notification so that
         # repeated errors for the same broken feed are silenced after the first.
@@ -282,6 +286,74 @@ class JinkiesApp:
         """
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self._toggle_window()
+
+    def _update_tray_icon(self, unread_count: int) -> None:
+        """Update the system tray icon, optionally compositing an unread badge.
+
+        When *unread_count* is zero, or when ``config.show_tray_badge`` is
+        ``False``, the plain base icon is used.  Otherwise a red circle with
+        the count (capped at "99+") is drawn over the bottom-right corner of a
+        copy of the base pixmap.
+
+        Args:
+            unread_count: Total number of unread entries.
+        """
+        # Build base icon pixmap
+        if self._icon_path:
+            base_pixmap = QPixmap(self._icon_path)
+        else:
+            base_pixmap = self.app.style().standardIcon(
+                self.app.style().StandardPixmap.SP_ComputerIcon
+            ).pixmap(32, 32)
+
+        if unread_count <= 0 or not self.config.show_tray_badge:
+            self._tray.setIcon(QIcon(base_pixmap))
+            return
+
+        # Compose a copy so the base pixmap is never mutated
+        composited = QPixmap(base_pixmap.size())
+        composited.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(composited)
+        painter.drawPixmap(0, 0, base_pixmap)
+
+        label = str(unread_count) if unread_count <= 99 else "99+"
+
+        # Choose a bold font sized to fit inside the badge
+        font = QFont()
+        font.setBold(True)
+        font.setPixelSize(max(8, base_pixmap.height() // 4))
+        painter.setFont(font)
+
+        fm = painter.fontMetrics()
+        text_rect = fm.boundingRect(label)
+        padding = max(2, base_pixmap.height() // 10)
+        badge_diameter = max(text_rect.width(), text_rect.height()) + padding * 2
+
+        # Position badge in the bottom-right corner
+        icon_w = base_pixmap.width()
+        icon_h = base_pixmap.height()
+        badge_x = icon_w - badge_diameter
+        badge_y = icon_h - badge_diameter
+
+        # Draw red circle
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#e03030"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(badge_x, badge_y, badge_diameter, badge_diameter)
+
+        # Draw white count text centred inside the circle
+        painter.setPen(QColor("white"))
+        painter.drawText(
+            badge_x,
+            badge_y,
+            badge_diameter,
+            badge_diameter,
+            Qt.AlignmentFlag.AlignCenter,
+            label,
+        )
+
+        painter.end()
+        self._tray.setIcon(QIcon(composited))
 
     def _on_new_entries(self, entries: list[FeedEntry]) -> None:
         """Handle new entries found by the poller.
@@ -480,6 +552,20 @@ class JinkiesApp:
         for i in sorted(valid, reverse=True):
             self.config.feeds.pop(i)
         self._apply_config_changes()
+
+    def _on_reorder_feeds(self, feeds: list[Feed]) -> None:
+        """Persist a drag-drop feed reorder and keep the poller in sync.
+
+        Called when the user drags a feed to a new position in the feed list.
+        Updates the in-memory config, saves it to disk, and notifies the poller
+        of the new order without restarting it.
+
+        Args:
+            feeds: New ordered list of Feed objects as arranged by the user.
+        """
+        self.config.feeds = feeds
+        save_config(self.config)
+        self.poller.update_feeds(feeds)
 
     def _on_settings(self) -> None:
         """Show the settings dialog."""

@@ -201,6 +201,8 @@ class AppConfig:
         page_size: Number of entries to show per page in the entry table.
         theme: UI theme name.  ``"dark"`` for the built-in dark palette;
             any other value (e.g. ``"light"``) uses the platform default.
+        show_tray_badge: Whether to draw an unread-count badge on the system
+            tray icon.  When ``False`` the plain icon is always used.
     """
 
     poll_interval_secs: int = 60
@@ -214,6 +216,7 @@ class AppConfig:
     seen_ids_max_age_days: int = 30
     page_size: int = 100
     theme: str = "dark"
+    show_tray_badge: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -230,6 +233,7 @@ class AppConfig:
             "seen_ids_max_age_days": self.seen_ids_max_age_days,
             "page_size": self.page_size,
             "theme": self.theme,
+            "show_tray_badge": self.show_tray_badge,
         }
 
     @classmethod
@@ -321,4 +325,5 @@ class AppConfig:
             seen_ids_max_age_days=raw_max_age,
             page_size=raw_page_size,
             theme=data.get("theme", "dark"),
+            show_tray_badge=bool(data.get("show_tray_badge", True)),
         )

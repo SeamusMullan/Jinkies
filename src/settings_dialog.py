@@ -90,6 +90,9 @@ class SettingsDialog(QDialog):
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
         display_layout.addRow("Theme:", self._theme_combo)
 
+        self._show_tray_badge_check = QCheckBox("Show unread badge on tray icon")
+        display_layout.addRow("", self._show_tray_badge_check)
+
         display_group.setLayout(display_layout)
         layout.addWidget(display_group)
 
@@ -172,6 +175,7 @@ class SettingsDialog(QDialog):
         self._error_sound.setText(self.config.sound_map.get("error", ""))
         self._notif_style.setCurrentText(self.config.notification_style)
         self._theme_combo.setCurrentText(self.config.theme)
+        self._show_tray_badge_check.setChecked(self.config.show_tray_badge)
 
         self._feed_list.clear()
         for feed in self.config.feeds:
@@ -334,6 +338,7 @@ class SettingsDialog(QDialog):
         self.config.sound_map["error"] = self._error_sound.text()
         self.config.notification_style = self._notif_style.currentText()
         self.config.theme = self._theme_combo.currentText()
+        self.config.show_tray_badge = self._show_tray_badge_check.isChecked()
 
         self.config.feeds = []
         for i in range(self._feed_list.count()):
