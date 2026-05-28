@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from src.credential_store import delete_credentials, get_credentials, store_credentials
 from src.feed_import import import_local_feed, import_opml
 from src.models import Feed
+from src.theme import load_theme
 from src.url_validation import check_feed_connectivity, validate_feed_url
 
 if TYPE_CHECKING:
@@ -83,6 +84,12 @@ class SettingsDialog(QDialog):
         self._page_size_spinner.setRange(1, 10_000)
         self._page_size_spinner.setSuffix(" entries")
         display_layout.addRow("Page size:", self._page_size_spinner)
+
+        self._theme_combo = QComboBox()
+        self._theme_combo.addItems(["dark", "light"])
+        self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
+        display_layout.addRow("Theme:", self._theme_combo)
+
         display_group.setLayout(display_layout)
         layout.addWidget(display_group)
 
@@ -164,6 +171,7 @@ class SettingsDialog(QDialog):
         self._new_entry_sound.setText(self.config.sound_map.get("new_entry", ""))
         self._error_sound.setText(self.config.sound_map.get("error", ""))
         self._notif_style.setCurrentText(self.config.notification_style)
+        self._theme_combo.setCurrentText(self.config.theme)
 
         self._feed_list.clear()
         for feed in self.config.feeds:
@@ -197,9 +205,11 @@ class SettingsDialog(QDialog):
             if username and token:
                 store_credentials(url, username, token)
 
+            raw_interval = dialog.poll_interval_spin.value()
             feed = Feed(
                 url=url,
                 name=dialog.name_edit.text(),
+                poll_interval_secs=raw_interval if raw_interval > 0 else None,
             )
             item = QListWidgetItem(f"{feed.name} — {feed.url}")
             item.setData(Qt.ItemDataRole.UserRole, feed)
@@ -216,6 +226,8 @@ class SettingsDialog(QDialog):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             feed.name = dialog.name_edit.text()
             feed.url = dialog.url_edit.text()
+            raw_interval = dialog.poll_interval_spin.value()
+            feed.poll_interval_secs = raw_interval if raw_interval > 0 else None
 
             username = dialog.auth_user_edit.text() or None
             token = dialog.auth_token_edit.text() or None
@@ -307,6 +319,13 @@ class SettingsDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, feed)
             self._feed_list.addItem(item)
 
+    def _on_theme_changed(self, name: str) -> None:
+        """Apply theme immediately for live preview."""
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(load_theme(name))
+
     def _save_and_accept(self) -> None:
         """Save settings to config and close."""
         self.config.poll_interval_secs = self._interval_spinner.value()
@@ -314,6 +333,7 @@ class SettingsDialog(QDialog):
         self.config.sound_map["new_entry"] = self._new_entry_sound.text()
         self.config.sound_map["error"] = self._error_sound.text()
         self.config.notification_style = self._notif_style.currentText()
+        self.config.theme = self._theme_combo.currentText()
 
         self.config.feeds = []
         for i in range(self._feed_list.count()):
@@ -529,6 +549,10 @@ class FeedEditDialog(QDialog):
 
         self.name_edit = QLineEdit()
         self.url_edit = QLineEdit()
+        self.poll_interval_spin = QSpinBox()
+        self.poll_interval_spin.setRange(0, 86400)
+        self.poll_interval_spin.setSuffix(" sec")
+        self.poll_interval_spin.setSpecialValueText("Use global")
         self.auth_user_edit = QLineEdit()
         self.auth_user_edit.setPlaceholderText("Optional")
         self.auth_token_edit = QLineEdit()
@@ -538,12 +562,14 @@ class FeedEditDialog(QDialog):
         if feed:
             self.name_edit.setText(feed.name)
             self.url_edit.setText(feed.url)
+            self.poll_interval_spin.setValue(feed.poll_interval_secs or 0)
             creds = get_credentials(feed.url)
             if creds:
                 self.auth_user_edit.setText(creds[0])
                 self.auth_token_edit.setText(creds[1])
 
         layout.addRow("Name:", self.name_edit)
+        layout.addRow("Poll interval:", self.poll_interval_spin)
         layout.addRow("URL:", self.url_edit)
         layout.addRow("Auth User:", self.auth_user_edit)
         layout.addRow("Auth Token:", self.auth_token_edit)

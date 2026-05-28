@@ -201,20 +201,37 @@ class FeedPoller(QThread):
         """
         return min(_BACKOFF_BASE_SECS * (2 ** failure_count), self.max_backoff_secs)
 
+    def _effective_interval(self, feed: Feed) -> int:
+        """Return the poll interval to use for *feed*.
+
+        Uses the feed's own ``poll_interval_secs`` override when set,
+        otherwise falls back to the global :attr:`poll_interval`.
+
+        Args:
+            feed: The feed to query.
+
+        Returns:
+            Effective poll interval in seconds.
+        """
+        if feed.poll_interval_secs is not None:
+            return feed.poll_interval_secs
+        return self.poll_interval
+
     def _handle_poll_success(self, feed: Feed) -> None:
         """Reset backoff state after a successful poll.
 
-        Clears the failure counter and scheduled next-poll time for *feed*.
-        Emits ``feed_backoff_changed(url, 0)`` only if the feed was
-        previously in a backoff state so that the UI can remove the
-        backoff indicator.
+        Clears the failure counter and schedules the next poll using the
+        effective per-feed (or global) interval.  Emits
+        ``feed_backoff_changed(url, 0)`` only if the feed was previously in
+        a backoff state so that the UI can remove the backoff indicator.
 
         Args:
             feed: The feed whose poll succeeded.
         """
         was_in_backoff = feed.url in self._backoff_counts
         self._backoff_counts.pop(feed.url, None)
-        self._next_poll_times.pop(feed.url, None)
+        interval = self._effective_interval(feed)
+        self._next_poll_times[feed.url] = time.time() + interval
         if was_in_backoff:
             self.feed_backoff_changed.emit(feed.url, 0)
 

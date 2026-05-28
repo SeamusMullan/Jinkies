@@ -377,6 +377,7 @@ class TestSettingsDialogAddFeed:
         mock_feed_dialog.name_edit.text.return_value = "Example Feed"
         mock_feed_dialog.auth_user_edit.text.return_value = ""
         mock_feed_dialog.auth_token_edit.text.return_value = ""
+        mock_feed_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_feed_dialog):
             dialog._add_feed()
@@ -408,6 +409,7 @@ class TestSettingsDialogAddFeed:
         mock_feed_dialog.name_edit.text.return_value = "Secure Feed"
         mock_feed_dialog.auth_user_edit.text.return_value = "user"
         mock_feed_dialog.auth_token_edit.text.return_value = "token123"
+        mock_feed_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_feed_dialog), \
              patch("src.settings_dialog.store_credentials") as mock_store:
@@ -427,6 +429,7 @@ class TestSettingsDialogAddFeed:
         mock_feed_dialog.name_edit.text.return_value = "Open Feed"
         mock_feed_dialog.auth_user_edit.text.return_value = ""
         mock_feed_dialog.auth_token_edit.text.return_value = ""
+        mock_feed_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_feed_dialog), \
              patch("src.settings_dialog.store_credentials") as mock_store:
@@ -468,6 +471,7 @@ class TestSettingsDialogEditFeed:
         mock_edit_dialog.url_edit.text.return_value = "https://example.com/updated.atom"
         mock_edit_dialog.auth_user_edit.text.return_value = ""
         mock_edit_dialog.auth_token_edit.text.return_value = ""
+        mock_edit_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_edit_dialog), \
              patch("src.settings_dialog.delete_credentials"):
@@ -503,6 +507,7 @@ class TestSettingsDialogEditFeed:
         mock_edit_dialog.url_edit.text.return_value = "https://newhost.example.com/feed"
         mock_edit_dialog.auth_user_edit.text.return_value = ""
         mock_edit_dialog.auth_token_edit.text.return_value = ""
+        mock_edit_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_edit_dialog), \
              patch("src.settings_dialog.delete_credentials") as mock_delete:
@@ -522,6 +527,7 @@ class TestSettingsDialogEditFeed:
         mock_edit_dialog.url_edit.text.return_value = "https://example.com/feed.atom"
         mock_edit_dialog.auth_user_edit.text.return_value = "newuser"
         mock_edit_dialog.auth_token_edit.text.return_value = "newtoken"
+        mock_edit_dialog.poll_interval_spin.value.return_value = 0
 
         with patch("src.settings_dialog.FeedEditDialog", return_value=mock_edit_dialog), \
              patch("src.settings_dialog.store_credentials") as mock_store:

@@ -283,21 +283,22 @@ class TestFeedPollerAuth:
 
         assert len(entries) == 2
 
+    @patch("src.feed_poller.socket.setdefaulttimeout")
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")
     def test_no_auth_fetch_uses_socket_timeout(
-        self, mock_parse, _mock_creds, mock_feedparser_result, qtbot,
+        self, mock_parse, _mock_creds, mock_set_timeout, mock_feedparser_result, qtbot,
     ):
-        """Non-auth feedparser.parse must be called with a socket_timeout."""
+        """Non-auth fetch must apply a socket timeout to prevent indefinite blocking."""
         mock_parse.return_value = mock_feedparser_result
         feed = Feed(url="https://example.com/feed.atom", name="Timed")
         poller = FeedPoller(feeds=[feed])
         poller._poll_feed(feed)
 
-        mock_parse.assert_called_once()
-        _, kwargs = mock_parse.call_args
-        assert "socket_timeout" in kwargs, "feedparser.parse must be called with socket_timeout"
-        assert kwargs["socket_timeout"] > 0
+        # socket.setdefaulttimeout must have been called with a positive value.
+        mock_set_timeout.assert_called()
+        timeout_value = mock_set_timeout.call_args_list[0][0][0]
+        assert timeout_value > 0
 
     @patch("src.feed_poller.urllib.request.urlopen")
     @patch("src.feed_poller.get_credentials", return_value=("alice", "secret"))
@@ -801,7 +802,9 @@ class TestFeedPollerBackoff:
 
         poller._poll_feed(sample_feed)  # succeeds
         assert sample_feed.url not in poller._backoff_counts
-        assert sample_feed.url not in poller._next_poll_times
+        # After a successful poll the next poll time is scheduled in the future.
+        import time as _time
+        assert poller._next_poll_times.get(sample_feed.url, 0.0) > _time.time()
 
     @patch("src.feed_poller.get_credentials", return_value=None)
     @patch("src.feed_poller.feedparser.parse")

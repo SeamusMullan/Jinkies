@@ -46,6 +46,9 @@ class Feed:
         modified: HTTP Last-Modified header value (RFC 7231 date string)
             from the last successful poll, used to send conditional
             ``If-Modified-Since`` requests.
+        poll_interval_secs: Per-feed poll interval override in seconds.
+            When ``None`` the global :attr:`AppConfig.poll_interval_secs`
+            is used.  Minimum value is 1 second if provided.
     """
 
     url: str
@@ -57,6 +60,7 @@ class Feed:
     auth_token: str | None = None
     etag: str | None = None
     modified: str | None = None
+    poll_interval_secs: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -68,7 +72,7 @@ class Feed:
         Returns:
             Dictionary representation of this Feed.
         """
-        return {
+        d: dict[str, Any] = {
             "url": self.url,
             "name": self.name,
             "enabled": self.enabled,
@@ -78,6 +82,9 @@ class Feed:
             "etag": self.etag,
             "modified": self.modified,
         }
+        if self.poll_interval_secs is not None:
+            d["poll_interval_secs"] = self.poll_interval_secs
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Feed:
@@ -94,6 +101,16 @@ class Feed:
         Returns:
             A Feed instance.
         """
+        raw_feed_interval = data.get("poll_interval_secs")
+        if raw_feed_interval is not None and raw_feed_interval < _POLL_INTERVAL_MIN:
+            logger.warning(
+                "Feed poll_interval_secs value %r is below the minimum of %d; "
+                "clamping to %d.",
+                raw_feed_interval,
+                _POLL_INTERVAL_MIN,
+                _POLL_INTERVAL_MIN,
+            )
+            raw_feed_interval = _POLL_INTERVAL_MIN
         return cls(
             url=data["url"],
             name=data["name"],
@@ -104,6 +121,7 @@ class Feed:
             auth_token=data.get("auth_token"),
             etag=data.get("etag"),
             modified=data.get("modified"),
+            poll_interval_secs=raw_feed_interval,
         )
 
 
@@ -181,6 +199,8 @@ class AppConfig:
             state.  Entries older than this may re-appear as new if they are
             still present in the feed.
         page_size: Number of entries to show per page in the entry table.
+        theme: UI theme name.  ``"dark"`` for the built-in dark palette;
+            any other value (e.g. ``"light"``) uses the platform default.
     """
 
     poll_interval_secs: int = 60
@@ -193,6 +213,7 @@ class AppConfig:
     max_entries: int = 10_000
     seen_ids_max_age_days: int = 30
     page_size: int = 100
+    theme: str = "dark"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -208,6 +229,7 @@ class AppConfig:
             "max_entries": self.max_entries,
             "seen_ids_max_age_days": self.seen_ids_max_age_days,
             "page_size": self.page_size,
+            "theme": self.theme,
         }
 
     @classmethod
@@ -298,4 +320,5 @@ class AppConfig:
             max_entries=raw_max_entries,
             seen_ids_max_age_days=raw_max_age,
             page_size=raw_page_size,
+            theme=data.get("theme", "dark"),
         )
