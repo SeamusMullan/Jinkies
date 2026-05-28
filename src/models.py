@@ -61,6 +61,7 @@ class Feed:
     etag: str | None = None
     modified: str | None = None
     poll_interval_secs: int | None = None
+    group: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -81,6 +82,7 @@ class Feed:
             "has_auth": bool(self.auth_user and self.auth_token),
             "etag": self.etag,
             "modified": self.modified,
+            "group": self.group,
         }
         if self.poll_interval_secs is not None:
             d["poll_interval_secs"] = self.poll_interval_secs
@@ -122,6 +124,7 @@ class Feed:
             etag=data.get("etag"),
             modified=data.get("modified"),
             poll_interval_secs=raw_feed_interval,
+            group=data.get("group"),
         )
 
 
@@ -146,6 +149,7 @@ class FeedEntry:
     entry_id: str
     seen: bool = False
     summary: str = ""
+    starred: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -161,6 +165,7 @@ class FeedEntry:
             "entry_id": self.entry_id,
             "seen": self.seen,
             "summary": self.summary,
+            "starred": self.starred,
         }
 
     @classmethod
@@ -181,6 +186,7 @@ class FeedEntry:
             entry_id=data["entry_id"],
             seen=data.get("seen", False),
             summary=data.get("summary", ""),
+            starred=data.get("starred", False),
         )
 
 

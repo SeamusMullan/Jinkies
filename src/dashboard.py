@@ -253,15 +253,16 @@ class Dashboard(QMainWindow):
 
     def _make_table(self) -> QTableWidget:
         """Create a standard entry table widget."""
-        table = QTableWidget(0, 4)
-        table.setHorizontalHeaderLabels(["Title", "Feed", "Published", "Status"])
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["★", "Title", "Feed", "Published", "Status"])
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
-        header.resizeSection(0, 400)
-        header.resizeSection(1, 140)
-        header.resizeSection(2, 120)
-        header.resizeSection(3, 60)
+        header.resizeSection(0, 28)
+        header.resizeSection(1, 400)
+        header.resizeSection(2, 140)
+        header.resizeSection(3, 120)
+        header.resizeSection(4, 60)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSortingEnabled(True)
@@ -489,6 +490,7 @@ class Dashboard(QMainWindow):
         self._feed_list.clear()
         self._filter_combo.clear()
         self._filter_combo.addItem("All Feeds")
+        self._filter_combo.addItem("⭐ Starred")
 
         for feed in feeds:
             item = QListWidgetItem(feed.name)
@@ -549,12 +551,22 @@ class Dashboard(QMainWindow):
         table.setSortingEnabled(False)
         table.setRowCount(len(entries))
         for row, entry in enumerate(entries):
-            table.setItem(row, 0, QTableWidgetItem(entry.title))
-            table.setItem(row, 1, QTableWidgetItem(self._feed_name_for(entry.feed_url)))
-            table.setItem(row, 2, QTableWidgetItem(entry.published))
-            table.setItem(row, 3, QTableWidgetItem(""))
+            # Column 0: star indicator
+            star_item = QTableWidgetItem("★" if entry.starred else "☆")
+            star_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            if entry.starred:
+                star_item.setForeground(QColor("#f5c518"))
+            else:
+                star_item.setForeground(QColor("#888888"))
+            star_item.setFlags(star_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            table.setItem(row, 0, star_item)
+            # Columns 1-4: title, feed, published, status
+            table.setItem(row, 1, QTableWidgetItem(entry.title))
+            table.setItem(row, 2, QTableWidgetItem(self._feed_name_for(entry.feed_url)))
+            table.setItem(row, 3, QTableWidgetItem(entry.published))
+            table.setItem(row, 4, QTableWidgetItem(""))
             status = self._apply_row_style(row, entry, table)
-            table.item(row, 3).setText(status)
+            table.item(row, 4).setText(status)
         table.setSortingEnabled(True)
 
     def _get_display_entries(self) -> list[FeedEntry]:
@@ -571,7 +583,9 @@ class Dashboard(QMainWindow):
         """
         current_filter = self._filter_combo.currentText()
         filtered: list[FeedEntry] = self.entries
-        if current_filter != "All Feeds":
+        if current_filter == "⭐ Starred":
+            filtered = [e for e in filtered if e.starred]
+        elif current_filter != "All Feeds":
             filtered = [
                 e for e in filtered
                 if self._feed_name_for(e.feed_url) == current_filter
@@ -796,18 +810,42 @@ class Dashboard(QMainWindow):
         self._current_page += 1
         self._refresh_table()
 
+    def _toggle_star(self, table: QTableWidget, row: int) -> None:
+        """Toggle the starred state of the entry at *row* in *table*.
+
+        Args:
+            table: The table widget containing the entry.
+            row: The row index of the entry to toggle.
+        """
+        entry = self._entry_at(table, row)
+        if entry is None:
+            return
+        entry.starred = not entry.starred
+        star_item = table.item(row, 0)
+        if star_item:
+            star_item.setText("★" if entry.starred else "☆")
+            if entry.starred:
+                star_item.setForeground(QColor("#f5c518"))
+            else:
+                star_item.setForeground(QColor("#888888"))
+        self._save_entries_store()
+
     def _on_entry_double_click(self, index: object, table: QTableWidget) -> None:
         """Open the entry link in the default browser on double-click.
 
-        Marks the entry as seen and immediately persists the updated state
-        to disk, so the seen status survives application restarts even if
-        the next periodic save has not yet occurred.
+        Double-clicking the star column (column 0) toggles the star instead of
+        opening the link.  For all other columns the entry link is opened and the
+        entry is marked as seen.
 
         Args:
             index: The model index of the double-clicked row.
             table: The table widget that was double-clicked.
         """
         row = index.row()  # type: ignore[union-attr]
+        col = index.column()  # type: ignore[union-attr]
+        if col == 0:
+            self._toggle_star(table, row)
+            return
         entry = self._entry_at(table, row)
         if entry and entry.link and (entry.link.startswith("http") or entry.link.startswith("https")):
             from PySide6.QtCore import QUrl
@@ -825,6 +863,15 @@ class Dashboard(QMainWindow):
             table: The table widget that was right-clicked.
         """
         menu = QMenu(self)
+
+        toggle_star_action = menu.addAction(
+            qta.icon("fa6s.star", color="#f5c518"), "Toggle Star"
+        )
+        toggle_star_action.triggered.connect(
+            lambda: self._toggle_star(table, table.currentRow())
+        )
+
+        menu.addSeparator()
 
         mark_selected_action = menu.addAction(
             qta.icon("fa6s.eye", color="#cccccc"), "Mark Selected as Seen"
@@ -1089,6 +1136,7 @@ class Dashboard(QMainWindow):
             Enter     — open selected entry in browser and mark as seen
             Space     — mark selected entry as seen and advance to next row
             U         — mark selected entry as unseen (move back to unread)
+            S         — toggle star/bookmark on the selected entry
             /         — focus the search bar (only when search bar is not active)
         """
         key = event.key()
@@ -1126,6 +1174,9 @@ class Dashboard(QMainWindow):
             return
         if key == Qt.Key.Key_U and not search_has_focus:
             self._mark_entry_unseen(target)
+            return
+        if key == Qt.Key.Key_S and not search_has_focus:
+            self._toggle_star(target, target.currentRow())
             return
         if key == Qt.Key.Key_Slash and not search_has_focus:
             self._search_input.setFocus()
