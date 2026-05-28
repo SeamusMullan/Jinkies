@@ -34,6 +34,7 @@ from src.feed_poller import FeedPoller
 from src.models import Feed, FeedEntry
 from src.notifier import Notifier
 from src.settings_dialog import FeedEditDialog, ImportPreviewDialog, SettingsDialog
+from src.theme import load_theme
 
 
 def _get_icon_path() -> str:
@@ -160,6 +161,7 @@ class JinkiesApp:
 
         # Load config and state
         self.config = load_config()
+        self.app.setStyleSheet(load_theme(self.config.theme))
         self._state = load_state(max_age_days=self.config.seen_ids_max_age_days)
         # seen_ids in state is now a dict {entry_id: iso_timestamp}
         seen_ids_dict: dict[str, str] = self._state.get("seen_ids", {})
@@ -489,6 +491,7 @@ class JinkiesApp:
     def _apply_config_changes(self) -> None:
         """Apply config changes to all components and save."""
         save_config(self.config)
+        self.app.setStyleSheet(load_theme(self.config.theme))
         self.dashboard.max_entries = self.config.max_entries
         self.dashboard.page_size = self.config.page_size
         self.dashboard.update_feeds(self.config.feeds)
