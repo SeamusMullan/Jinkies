@@ -1049,6 +1049,14 @@ class RuleEditDialog(QDialog):
         layout.addRow("Highlight color:", color_row)
         self._update_color_btn()
 
+        self._webhook_edit = QLineEdit()
+        self._webhook_edit.setPlaceholderText("https://...")
+        layout.addRow("Webhook URL:", self._webhook_edit)
+
+        self._script_edit = QLineEdit()
+        self._script_edit.setPlaceholderText('echo "$JINKIES_TITLE"')
+        layout.addRow("Script:", self._script_edit)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -1090,6 +1098,8 @@ class RuleEditDialog(QDialog):
         self._notification_check.setChecked(rule.notification)
         self._highlight_color = rule.highlight_color
         self._update_color_btn()
+        self._webhook_edit.setText(rule.webhook_url or "")
+        self._script_edit.setText(rule.script or "")
 
     def _browse_sound(self) -> None:
         """Open a file dialog to pick a WAV file for this rule."""
@@ -1141,6 +1151,8 @@ class RuleEditDialog(QDialog):
         status_text = self._status_combo.currentText()
         status = None if status_text == "Any" else status_text
         sound_file = self._sound_edit.text().strip() or None
+        webhook_url = self._webhook_edit.text().strip() or None
+        script = self._script_edit.text().strip() or None
         return Rule(
             name=self._name_edit.text().strip(),
             enabled=self._enabled_check.isChecked(),
@@ -1150,4 +1162,6 @@ class RuleEditDialog(QDialog):
             sound_file=sound_file,
             notification=self._notification_check.isChecked(),
             highlight_color=self._highlight_color,
+            webhook_url=webhook_url,
+            script=script,
         )

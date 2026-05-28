@@ -222,6 +222,8 @@ class Rule:
     sound_file: str | None = None
     notification: bool = False
     highlight_color: str | None = None
+    webhook_url: str | None = None
+    script: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -238,6 +240,8 @@ class Rule:
             "sound_file": self.sound_file,
             "notification": self.notification,
             "highlight_color": self.highlight_color,
+            "webhook_url": self.webhook_url,
+            "script": self.script,
         }
 
     @classmethod
@@ -259,6 +263,8 @@ class Rule:
             sound_file=data.get("sound_file"),
             notification=bool(data.get("notification", False)),
             highlight_color=data.get("highlight_color"),
+            webhook_url=data.get("webhook_url"),
+            script=data.get("script"),
         )
 
     def matches(self, entry: FeedEntry) -> bool:

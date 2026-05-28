@@ -25,6 +25,7 @@ import hashlib
 import http.client
 import logging
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -511,6 +512,72 @@ class FeedPoller(QThread):
             for rule in rules_snapshot:
                 if rule.enabled and rule.matches(entry):
                     self.rule_triggered.emit(entry, rule)
+                    if rule.webhook_url:
+                        threading.Thread(
+                            target=self._dispatch_webhook,
+                            args=(rule.webhook_url, entry),
+                            daemon=True,
+                        ).start()
+                    if rule.script:
+                        threading.Thread(
+                            target=self._dispatch_script,
+                            args=(rule.script, entry),
+                            daemon=True,
+                        ).start()
+
+    def _dispatch_webhook(self, url: str, entry: FeedEntry) -> None:
+        """POST entry data as JSON to url. Called in a daemon thread.
+
+        Args:
+            url: The webhook URL to POST to.
+            entry: The feed entry that triggered the rule.
+        """
+        import json  # noqa: PLC0415
+        payload = json.dumps({
+            "title": entry.title,
+            "link": entry.link,
+            "feed_url": entry.feed_url,
+            "published": entry.published,
+            "summary": entry.summary,
+        }).encode()
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "Jinkies/1.0"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=10)  # noqa: S310
+        except Exception:
+            pass  # Fire-and-forget; errors are silently swallowed
+
+    def _dispatch_script(self, script: str, entry: FeedEntry) -> None:
+        """Run script as a shell command with entry data as env vars.
+
+        Args:
+            script: Shell command string to execute.
+            entry: The feed entry whose data is passed as environment variables.
+        """
+        import os  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+        env = os.environ.copy()
+        env.update({
+            "JINKIES_TITLE": entry.title,
+            "JINKIES_LINK": entry.link,
+            "JINKIES_FEED_URL": entry.feed_url,
+            "JINKIES_PUBLISHED": entry.published,
+            "JINKIES_SUMMARY": entry.summary,
+        })
+        try:
+            subprocess.Popen(  # noqa: S602
+                script,
+                shell=True,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass
 
     def get_stats(self) -> dict[str, FeedStats]:
         """Return a snapshot of per-feed health statistics.
