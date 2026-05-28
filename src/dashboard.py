@@ -11,7 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QKeySequence
+from PySide6.QtGui import QColor, QDesktopServices, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -37,6 +37,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+import qtawesome as qta
 
 from src.config import get_config_dir
 from src.models import FeedEntry
@@ -73,6 +75,10 @@ class Dashboard(QMainWindow):
     #: Emitted when entries should be marked as seen.  The argument is either
     #: ``None`` (mark all feeds) or a feed *name* string (scope to one feed).
     mark_all_seen_requested = Signal(object)
+    #: Emitted with the new ordered list of Feed objects after a drag-drop reorder.
+    reorder_feeds_requested = Signal(list)
+    #: Emitted with the total unread count each time the table is refreshed.
+    unread_count_changed = Signal(int)
 
     def __init__(self) -> None:
         """Initialize the dashboard window."""
@@ -105,6 +111,8 @@ class Dashboard(QMainWindow):
         self._is_paused = False
         self._feed_errors: dict[str, str] = {}
         self._feed_backoff: dict[str, int] = {}  # url → backoff seconds
+
+        self._active_table: QTableWidget | None = None
 
         self._setup_menubar()
         self._setup_toolbar()
@@ -196,38 +204,50 @@ class Dashboard(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        self._add_feed_action = toolbar.addAction("Add Feed")
+        self._add_feed_action = toolbar.addAction(
+            qta.icon("fa6s.plus", color="#cccccc"), "Add Feed"
+        )
         self._add_feed_action.setShortcut(QKeySequence.StandardKey.New)
         self._add_feed_action.setToolTip("Add a new RSS/Atom feed to monitor")
         self._add_feed_action.triggered.connect(self.add_feed_requested.emit)
 
-        self._remove_feed_action = toolbar.addAction("Remove Feed")
+        self._remove_feed_action = toolbar.addAction(
+            qta.icon("fa6s.minus", color="#cccccc"), "Remove Feed"
+        )
         self._remove_feed_action.setShortcut(QKeySequence(Qt.Key.Key_Delete))
         self._remove_feed_action.setToolTip("Remove the selected feed(s)")
         self._remove_feed_action.triggered.connect(self._on_remove_feed_clicked)
 
-        self._import_feeds_action = toolbar.addAction("Import Feeds")
+        self._import_feeds_action = toolbar.addAction(
+            qta.icon("fa6s.file-import", color="#cccccc"), "Import Feeds"
+        )
         self._import_feeds_action.setShortcut(QKeySequence("Ctrl+I"))
         self._import_feeds_action.setToolTip("Import feeds from an OPML file")
         self._import_feeds_action.triggered.connect(self.import_feeds_requested.emit)
 
         toolbar.addSeparator()
 
-        self._settings_action = toolbar.addAction("Settings")
+        self._settings_action = toolbar.addAction(
+            qta.icon("fa6s.gear", color="#cccccc"), "Settings"
+        )
         self._settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self._settings_action.setToolTip("Open application settings")
         self._settings_action.triggered.connect(self.settings_requested.emit)
 
         toolbar.addSeparator()
 
-        self._pause_action = toolbar.addAction("Pause")
+        self._pause_action = toolbar.addAction(
+            qta.icon("fa6s.pause", color="#cccccc"), "Pause"
+        )
         self._pause_action.setShortcut(QKeySequence("Ctrl+P"))
         self._pause_action.setToolTip("Pause or resume feed polling")
         self._pause_action.triggered.connect(self._on_pause_clicked)
 
         toolbar.addSeparator()
 
-        self._mark_all_seen_action = toolbar.addAction("Mark All Seen")
+        self._mark_all_seen_action = toolbar.addAction(
+            qta.icon("fa6s.check-double", color="#cccccc"), "Mark All Seen"
+        )
         self._mark_all_seen_action.setToolTip("Mark all current entries as seen")
         self._mark_all_seen_action.triggered.connect(self._on_mark_all_seen_clicked)
 
@@ -286,6 +306,9 @@ class Dashboard(QMainWindow):
 
         self._feed_list = QListWidget()
         self._feed_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self._feed_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._feed_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._feed_list.model().rowsMoved.connect(self._on_feed_reordered)
         self._splitter.addWidget(self._feed_list)
 
         # Right pane: vertical splitter with (top) tables pane and (bottom) preview pane
@@ -331,6 +354,14 @@ class Dashboard(QMainWindow):
         self._read_table.selectionModel().selectionChanged.connect(
             lambda: self._on_table_selection_changed(self._read_table)
         )
+
+        # Track which table most recently received focus for keyboard navigation
+        self._unread_table.installEventFilter(self)
+        self._read_table.installEventFilter(self)
+
+        # Tab focus order: feed list → unread table → read table
+        self.setTabOrder(self._feed_list, self._unread_table)
+        self.setTabOrder(self._unread_table, self._read_table)
 
         self._splitter.addWidget(self._right_splitter)
         self._splitter.setSizes([200, 600])
@@ -592,6 +623,8 @@ class Dashboard(QMainWindow):
             self._prev_page_btn.setEnabled(self._current_page > 0)
             self._next_page_btn.setEnabled(self._current_page < total_pages - 1)
 
+        self.unread_count_changed.emit(self._unread_count)
+
     def _entry_at(self, table: QTableWidget, row: int) -> FeedEntry | None:
         """Return the FeedEntry corresponding to *row* in *table*."""
         filtered = self._get_display_entries()
@@ -793,7 +826,9 @@ class Dashboard(QMainWindow):
         """
         menu = QMenu(self)
 
-        mark_selected_action = menu.addAction("Mark Selected as Seen")
+        mark_selected_action = menu.addAction(
+            qta.icon("fa6s.eye", color="#cccccc"), "Mark Selected as Seen"
+        )
         mark_selected_action.triggered.connect(lambda: self._mark_selected_seen(table))
 
         menu.addSeparator()
@@ -803,7 +838,9 @@ class Dashboard(QMainWindow):
             mark_all_label = "Mark All as Seen…"
         else:
             mark_all_label = f'Mark All in "{current_filter}" as Seen'
-        mark_all_action = menu.addAction(mark_all_label)
+        mark_all_action = menu.addAction(
+            qta.icon("fa6s.check-double", color="#cccccc"), mark_all_label
+        )
         mark_all_action.triggered.connect(self._on_mark_all_seen_clicked)
 
         menu.exec(table.viewport().mapToGlobal(pos))
@@ -906,10 +943,30 @@ class Dashboard(QMainWindow):
         if indices:
             self.remove_feed_requested.emit(indices)
 
+    def _on_feed_reordered(self) -> None:
+        """Called after a drag-drop reorder in the feed list.
+
+        Rebuilds the ordered Feed list from the current QListWidget row order
+        and emits :attr:`reorder_feeds_requested` so the app controller can
+        persist the new order and update the poller.
+        """
+        url_to_feed = {f.url: f for f in self._feeds}
+        ordered: list[Feed] = []
+        for i in range(self._feed_list.count()):
+            item = self._feed_list.item(i)
+            if item:
+                url = item.data(Qt.ItemDataRole.UserRole)
+                feed = url_to_feed.get(url)
+                if feed is not None:
+                    ordered.append(feed)
+        self.reorder_feeds_requested.emit(ordered)
+
     def _on_pause_clicked(self) -> None:
         """Toggle the pause state and emit the signal."""
         self._is_paused = not self._is_paused
         self._pause_action.setText("Resume" if self._is_paused else "Pause")
+        icon_name = "fa6s.play" if self._is_paused else "fa6s.pause"
+        self._pause_action.setIcon(qta.icon(icon_name, color="#cccccc"))
         self._update_stats()
         self.pause_requested.emit()
 
@@ -921,6 +978,8 @@ class Dashboard(QMainWindow):
         """
         self._is_paused = paused
         self._pause_action.setText("Resume" if paused else "Pause")
+        icon_name = "fa6s.play" if paused else "fa6s.pause"
+        self._pause_action.setIcon(qta.icon(icon_name, color="#cccccc"))
         self._update_stats()
 
     def reset_daily_stats(self) -> None:
@@ -958,3 +1017,119 @@ class Dashboard(QMainWindow):
         """Reset daily stats and reschedule for the next midnight."""
         self.reset_daily_stats()
         self._schedule_daily_reset()
+
+    # ------------------------------------------------------------------
+    # Keyboard-first navigation helpers
+    # ------------------------------------------------------------------
+
+    def eventFilter(self, watched: object, event: object) -> bool:
+        """Track which table last received focus for keyboard navigation."""
+        from PySide6.QtCore import QEvent
+
+        if event.type() == QEvent.Type.FocusIn:  # type: ignore[union-attr]
+            if watched is self._unread_table:
+                self._active_table = self._unread_table
+            elif watched is self._read_table:
+                self._active_table = self._read_table
+        return super().eventFilter(watched, event)
+
+    def _open_and_mark_seen(self, table: QTableWidget) -> None:
+        """Open the selected entry link in browser and mark it as seen.
+
+        Mirrors the double-click behaviour without requiring a QModelIndex.
+
+        Args:
+            table: The table whose current row should be acted on.
+        """
+        from PySide6.QtCore import QUrl
+
+        row = table.currentRow()
+        entry = self._entry_at(table, row)
+        if entry and entry.link and (
+            entry.link.startswith("http") or entry.link.startswith("https")
+        ):
+            QDesktopServices.openUrl(QUrl(entry.link))
+            entry.seen = True
+            self._save_entries_store()
+            self._refresh_table()
+
+    def _mark_entry_unseen(self, table: QTableWidget) -> None:
+        """Mark the currently selected entry as unseen and refresh.
+
+        Args:
+            table: The table whose current row should be marked unseen.
+        """
+        row = table.currentRow()
+        entry = self._entry_at(table, row)
+        if entry and entry.seen:
+            entry.seen = False
+            self._save_entries_store()
+            self._refresh_table()
+
+    def _move_selection(self, table: QTableWidget, delta: int) -> None:
+        """Move the table selection by *delta* rows (+1 down, -1 up).
+
+        Args:
+            table: The table to navigate.
+            delta: Direction to move (+1 for down, -1 for up).
+        """
+        row_count = table.rowCount()
+        if row_count == 0:
+            return
+        current = table.currentRow()
+        new_row = max(0, min(row_count - 1, current + delta))
+        table.setCurrentCell(new_row, table.currentColumn())
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # type: ignore[override]
+        """Handle vim-style keyboard shortcuts for navigating feed entries.
+
+        Shortcuts:
+            J / Down  — move selection down in the active table
+            K / Up    — move selection up in the active table
+            Enter     — open selected entry in browser and mark as seen
+            Space     — mark selected entry as seen and advance to next row
+            U         — mark selected entry as unseen (move back to unread)
+            /         — focus the search bar (only when search bar is not active)
+        """
+        key = event.key()
+        search_has_focus = self._search_input.hasFocus()
+
+        # Determine the target table: prefer the one with Qt keyboard focus,
+        # falling back to _active_table, then _unread_table.
+        if self._unread_table.hasFocus():
+            target = self._unread_table
+        elif self._read_table.hasFocus():
+            target = self._read_table
+        elif self._active_table is not None:
+            target = self._active_table
+        else:
+            target = self._unread_table
+
+        if key in (Qt.Key.Key_J, Qt.Key.Key_Down) and not search_has_focus:
+            self._move_selection(target, +1)
+            return
+        if key in (Qt.Key.Key_K, Qt.Key.Key_Up) and not search_has_focus:
+            self._move_selection(target, -1)
+            return
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not search_has_focus:
+            self._open_and_mark_seen(target)
+            return
+        if key == Qt.Key.Key_Space and not search_has_focus:
+            row = target.currentRow()
+            entry = self._entry_at(target, row)
+            if entry and not entry.seen:
+                entry.seen = True
+                self._save_entries_store()
+                self._refresh_table()
+            else:
+                self._move_selection(target, +1)
+            return
+        if key == Qt.Key.Key_U and not search_has_focus:
+            self._mark_entry_unseen(target)
+            return
+        if key == Qt.Key.Key_Slash and not search_has_focus:
+            self._search_input.setFocus()
+            self._search_input.selectAll()
+            return
+
+        super().keyPressEvent(event)
