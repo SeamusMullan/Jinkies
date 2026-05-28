@@ -229,6 +229,7 @@ class JinkiesApp:
         self.dashboard.pause_requested.connect(self._on_pause_toggle)
         self.dashboard.reorder_feeds_requested.connect(self._on_reorder_feeds)
         self.dashboard.unread_count_changed.connect(self._update_tray_icon)
+        self.dashboard.health_requested.connect(self._on_health_requested)
 
         # Track which feeds have already produced an error notification so that
         # repeated errors for the same broken feed are silenced after the first.
@@ -247,6 +248,8 @@ class JinkiesApp:
         self.poller.poll_complete.connect(self._on_poll_complete)
         self.poller.poll_time_updated.connect(self._on_poll_time_updated)
         self.poller.feed_backoff_changed.connect(self._on_feed_backoff_changed)
+        self.poller.rule_triggered.connect(self._on_rule_triggered)
+        self.poller.update_rules(self.config.rules)
         self.poller.start()
 
     def _setup_tray_menu(self) -> None:
@@ -438,6 +441,25 @@ class JinkiesApp:
                 feed.last_poll_time = timestamp
                 break
 
+    def _on_rule_triggered(self, entry: FeedEntry, rule: object) -> None:
+        """Handle a rule match for a new entry.
+
+        Plays an optional per-rule sound and/or sends a notification
+        as configured in the rule.
+
+        Args:
+            entry: The new feed entry that matched the rule.
+            rule: The matching Rule object.
+        """
+        if rule.sound_file:
+            self.audio.play("new_entry", sound_file=rule.sound_file)
+        if rule.notification:
+            self.notifier.notify(
+                f"Rule: {rule.name}",
+                entry.title,
+                url=entry.link or None,
+            )
+
     def _on_feed_backoff_changed(self, url: str, backoff_secs: int) -> None:
         """Handle a change in a feed's exponential-backoff state.
 
@@ -567,6 +589,13 @@ class JinkiesApp:
         save_config(self.config)
         self.poller.update_feeds(feeds)
 
+    def _on_health_requested(self) -> None:
+        """Open the feed health dashboard as a non-modal dialog."""
+        from src.health_view import FeedHealthDialog
+
+        dlg = FeedHealthDialog(self.poller, parent=self.dashboard)
+        dlg.show()
+
     def _on_settings(self) -> None:
         """Show the settings dialog."""
         dialog = SettingsDialog(self.config, parent=self.dashboard)
@@ -584,6 +613,7 @@ class JinkiesApp:
         self.dashboard.update_feed_names_mapping(self.config.feeds)
         self.poller.update_feeds(self.config.feeds)
         self.poller.update_interval(self.config.poll_interval_secs)
+        self.poller.update_rules(self.config.rules)
         self.audio.sound_map = self.config.sound_map
         self.notifier = Notifier(
             tray_icon=self._tray,

@@ -29,6 +29,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from dataclasses import dataclass, field
 from threading import Event, Lock
 from typing import TYPE_CHECKING
 
@@ -36,13 +37,38 @@ import feedparser
 from PySide6.QtCore import QThread, Signal
 
 from src.credential_store import get_credentials
-from src.models import Feed, FeedEntry
+from src.models import Feed, FeedEntry, Rule
 from src.url_validation import validate_feed_url
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FeedStats:
+    """Per-feed health statistics collected during polling.
+
+    Attributes:
+        url: The feed URL these stats belong to.
+        total_polls: Total number of poll attempts.
+        successful_polls: Number of polls that parsed without error.
+        error_count: Number of polls that resulted in an error.
+        last_error: Human-readable description of the most recent error.
+        entries_today: Number of new entries received today.
+        last_poll_latency_ms: Duration of the most recent successful poll in ms.
+        last_poll_time: ISO 8601 timestamp of the most recent poll attempt.
+    """
+
+    url: str
+    total_polls: int = 0
+    successful_polls: int = 0
+    error_count: int = 0
+    last_error: str = ""
+    entries_today: int = 0
+    last_poll_latency_ms: float = 0.0
+    last_poll_time: str = ""
 
 #: Starting backoff interval in seconds (1 minute).
 _BACKOFF_BASE_SECS: int = 60
@@ -73,6 +99,7 @@ class FeedPoller(QThread):
     poll_complete = Signal()
     poll_time_updated = Signal(str, str)
     feed_backoff_changed = Signal(str, int)
+    rule_triggered = Signal(object, object)
 
     def __init__(
         self,
@@ -102,6 +129,11 @@ class FeedPoller(QThread):
         # Per-feed backoff state (only accessed from the poller thread).
         self._backoff_counts: dict[str, int] = {}
         self._next_poll_times: dict[str, float] = {}
+        # Per-feed health statistics (url → FeedStats).
+        self._stats: dict[str, FeedStats] = {}
+        # User-defined rules for entry matching.
+        self._rules_lock = Lock()
+        self._rules: list[Rule] = []
 
     def run(self) -> None:
         """Execute the polling loop.
@@ -141,14 +173,25 @@ class FeedPoller(QThread):
         Args:
             feed: The feed to poll.
         """
+        stats = self._stats.setdefault(feed.url, FeedStats(url=feed.url))
+        stats.total_polls += 1
+        poll_start = time.monotonic()
+        now_iso = datetime.datetime.now(tz=datetime.UTC).isoformat()
+        stats.last_poll_time = now_iso
+
         try:
             parsed = self._fetch_feed(feed)
             if parsed.bozo and not parsed.entries:
                 error_msg = str(parsed.bozo_exception) if parsed.bozo_exception else "Parse error"
+                stats.error_count += 1
+                stats.last_error = error_msg
                 self._handle_poll_failure(feed, error_msg)
                 return
 
             # Successful parse — reset any active backoff before processing.
+            latency_ms = (time.monotonic() - poll_start) * 1000
+            stats.successful_polls += 1
+            stats.last_poll_latency_ms = latency_ms
             self._handle_poll_success(feed)
 
             new_entries = []
@@ -178,9 +221,13 @@ class FeedPoller(QThread):
             )
 
             if new_entries:
+                stats.entries_today += len(new_entries)
+                self._evaluate_rules(new_entries)
                 self.new_entries_found.emit(new_entries)
 
         except (OSError, ValueError, http.client.HTTPException, urllib.error.URLError) as e:
+            stats.error_count += 1
+            stats.last_error = str(e)
             self._handle_poll_failure(feed, str(e))
         except Exception:
             logger.exception("Unexpected error polling feed %s", feed.url)
@@ -440,3 +487,40 @@ class FeedPoller(QThread):
         """
         self.poll_interval = interval
         self._sleep_interrupt_event.set()
+
+    def update_rules(self, rules: list[Rule]) -> None:
+        """Replace the active rule set.
+
+        Thread-safe; may be called from the main thread while the poller runs.
+
+        Args:
+            rules: New list of Rule objects to apply to incoming entries.
+        """
+        with self._rules_lock:
+            self._rules = list(rules)
+
+    def _evaluate_rules(self, entries: list[FeedEntry]) -> None:
+        """Check each entry against all enabled rules and emit rule_triggered.
+
+        Args:
+            entries: Newly discovered feed entries to evaluate.
+        """
+        with self._rules_lock:
+            rules_snapshot = list(self._rules)
+        for entry in entries:
+            for rule in rules_snapshot:
+                if rule.enabled and rule.matches(entry):
+                    self.rule_triggered.emit(entry, rule)
+
+    def get_stats(self) -> dict[str, FeedStats]:
+        """Return a snapshot of per-feed health statistics.
+
+        The returned dict maps feed URL to a :class:`FeedStats` instance.
+        Feeds that have not been polled yet will not appear in the result.
+        This method is safe to call from any thread.
+
+        Returns:
+            A shallow copy of the internal stats mapping so callers cannot
+            accidentally mutate the poller's state.
+        """
+        return dict(self._stats)
