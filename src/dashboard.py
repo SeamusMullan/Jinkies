@@ -79,6 +79,8 @@ class Dashboard(QMainWindow):
     reorder_feeds_requested = Signal(list)
     #: Emitted with the total unread count each time the table is refreshed.
     unread_count_changed = Signal(int)
+    #: Emitted when the user requests the feed health dashboard.
+    health_requested = Signal()
 
     def __init__(self) -> None:
         """Initialize the dashboard window."""
@@ -111,6 +113,7 @@ class Dashboard(QMainWindow):
         self._is_paused = False
         self._feed_errors: dict[str, str] = {}
         self._feed_backoff: dict[str, int] = {}  # url → backoff seconds
+        self._feed_groups: dict[str, list[Feed]] = {}
 
         self._active_table: QTableWidget | None = None
 
@@ -197,6 +200,12 @@ class Dashboard(QMainWindow):
         self._toggle_preview_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
         self._toggle_preview_action.setToolTip("Show or hide the entry preview pane")
         self._toggle_preview_action.toggled.connect(self._on_toggle_preview)
+
+        view_menu.addSeparator()
+        self._feed_health_action = view_menu.addAction("Feed Health…")
+        self._feed_health_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
+        self._feed_health_action.setToolTip("Show per-feed health statistics")
+        self._feed_health_action.triggered.connect(self.health_requested.emit)
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -483,6 +492,11 @@ class Dashboard(QMainWindow):
     def update_feeds(self, feeds: list[Feed]) -> None:
         """Refresh the feed list panel.
 
+        Feeds are grouped by their :attr:`~src.models.Feed.group` field.
+        Group headers are shown as bold, non-interactive items in the list.
+        Feeds without a group appear at the bottom under no header (unless
+        all feeds are ungrouped, in which case no header is shown at all).
+
         Args:
             feeds: Current list of Feed objects.
         """
@@ -492,8 +506,20 @@ class Dashboard(QMainWindow):
         self._filter_combo.addItem("All Feeds")
         self._filter_combo.addItem("⭐ Starred")
 
+        # Build group → feed mapping (preserving insertion order).
+        self._feed_groups = {}
+        ungrouped: list[Feed] = []
         for feed in feeds:
-            item = QListWidgetItem(feed.name)
+            if feed.group:
+                self._feed_groups.setdefault(feed.group, []).append(feed)
+            else:
+                ungrouped.append(feed)
+
+        all_ungrouped = not self._feed_groups
+
+        def _add_feed_item(feed: Feed, indent: bool) -> None:
+            label = ("  " + feed.name) if indent else feed.name
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, feed.url)
             item.setData(Qt.ItemDataRole.UserRole + 1, feed.enabled)
             if feed.url in self._feed_errors:
@@ -504,6 +530,28 @@ class Dashboard(QMainWindow):
                 item.setForeground(color)
             self._feed_list.addItem(item)
             self._filter_combo.addItem(feed.name)
+
+        # Add group-header items and their feeds to the filter combo.
+        for group_name, group_feeds in self._feed_groups.items():
+            # Group header — bold, not selectable
+            header_item = QListWidgetItem(f"  {group_name}")
+            font = header_item.font()
+            font.setBold(True)
+            header_item.setFont(font)
+            header_item.setFlags(
+                header_item.flags()
+                & ~Qt.ItemFlag.ItemIsSelectable
+                & ~Qt.ItemFlag.ItemIsEnabled
+            )
+            self._feed_list.addItem(header_item)
+            # Group entry in filter combo
+            self._filter_combo.addItem(f"\U0001f4c1 {group_name}")
+            for feed in group_feeds:
+                _add_feed_item(feed, indent=True)
+
+        # Ungrouped feeds
+        for feed in ungrouped:
+            _add_feed_item(feed, indent=not all_ungrouped)
 
     def add_entries(self, new_entries: list[FeedEntry]) -> None:
         """Add new entries to the table and update stats.
@@ -583,8 +631,13 @@ class Dashboard(QMainWindow):
         """
         current_filter = self._filter_combo.currentText()
         filtered: list[FeedEntry] = self.entries
+        _GROUP_PREFIX = "\U0001f4c1 "
         if current_filter == "⭐ Starred":
             filtered = [e for e in filtered if e.starred]
+        elif current_filter.startswith(_GROUP_PREFIX):
+            group_name = current_filter[len(_GROUP_PREFIX):]
+            group_urls = {f.url for f in self._feed_groups.get(group_name, [])}
+            filtered = [e for e in filtered if e.feed_url in group_urls]
         elif current_filter != "All Feeds":
             filtered = [
                 e for e in filtered

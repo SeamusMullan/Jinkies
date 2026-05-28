@@ -1,14 +1,17 @@
 """Data models for Jinkies feed monitor.
 
 Defines the core data structures used throughout the application:
-Feed, FeedEntry, and AppConfig.
+Feed, FeedEntry, AppConfig, and Rule.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +194,103 @@ class FeedEntry:
 
 
 @dataclass
+class Rule:
+    """A user-defined rule: condition -> action on new feed entries.
+
+    Attributes:
+        name: Display name for the rule.
+        enabled: Whether the rule is active.
+        feed_url: Match only entries from this feed URL.  ``None`` matches all feeds.
+        keyword: Case-insensitive substring match against entry title.
+            ``None`` skips the keyword check.
+        status: Jenkins status keyword to match (e.g. ``"stable"``, ``"failed"``,
+            ``"unstable"``).  ``None`` skips the status check.
+        sound_file: Path to a WAV file to play when the rule fires.
+            ``None`` plays no additional sound.
+        notification: Whether to send a desktop notification when the rule fires.
+        highlight_color: Hex colour string (e.g. ``"#ff8800"``) for row highlight.
+            ``None`` means no highlight.
+    """
+
+    name: str
+    enabled: bool = True
+    # Condition fields
+    feed_url: str | None = None
+    keyword: str | None = None
+    status: str | None = None
+    # Action fields
+    sound_file: str | None = None
+    notification: bool = False
+    highlight_color: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dictionary.
+
+        Returns:
+            Dictionary representation of this Rule.
+        """
+        return {
+            "name": self.name,
+            "enabled": self.enabled,
+            "feed_url": self.feed_url,
+            "keyword": self.keyword,
+            "status": self.status,
+            "sound_file": self.sound_file,
+            "notification": self.notification,
+            "highlight_color": self.highlight_color,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Rule:
+        """Deserialize from a dictionary.
+
+        Args:
+            data: Dictionary with rule fields.
+
+        Returns:
+            A Rule instance.
+        """
+        return cls(
+            name=data.get("name", ""),
+            enabled=bool(data.get("enabled", True)),
+            feed_url=data.get("feed_url"),
+            keyword=data.get("keyword"),
+            status=data.get("status"),
+            sound_file=data.get("sound_file"),
+            notification=bool(data.get("notification", False)),
+            highlight_color=data.get("highlight_color"),
+        )
+
+    def matches(self, entry: FeedEntry) -> bool:
+        """Return True if this rule's conditions match *entry*.
+
+        All specified conditions must match (AND logic).  A condition set to
+        ``None`` is treated as a wildcard and always passes.
+
+        Args:
+            entry: The feed entry to test.
+
+        Returns:
+            True if every non-None condition matches.
+        """
+        if self.feed_url is not None and entry.feed_url != self.feed_url:
+            return False
+        if self.keyword is not None and self.keyword.lower() not in entry.title.lower():
+            return False
+        if self.status is not None:
+            # Inline import avoided via lazy import at call site to prevent
+            # circular imports; jenkins_status lives in src.notifier.
+            from src.notifier import jenkins_status  # noqa: PLC0415
+            result = jenkins_status(entry.title)
+            if result is None:
+                return False
+            kw, _ = result
+            if kw != self.status.lower():
+                return False
+        return True
+
+
+@dataclass
 class AppConfig:
     """Application configuration.
 
@@ -223,6 +323,7 @@ class AppConfig:
     page_size: int = 100
     theme: str = "dark"
     show_tray_badge: bool = True
+    rules: list[Rule] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -240,6 +341,7 @@ class AppConfig:
             "page_size": self.page_size,
             "theme": self.theme,
             "show_tray_badge": self.show_tray_badge,
+            "rules": [r.to_dict() for r in self.rules],
         }
 
     @classmethod
@@ -332,4 +434,5 @@ class AppConfig:
             page_size=raw_page_size,
             theme=data.get("theme", "dark"),
             show_tray_badge=bool(data.get("show_tray_badge", True)),
+            rules=[Rule.from_dict(r) for r in data.get("rules", [])],
         )

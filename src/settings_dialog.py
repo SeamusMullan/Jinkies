@@ -9,9 +9,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -35,7 +37,7 @@ from PySide6.QtWidgets import (
 from src.credential_store import delete_credentials, get_credentials, store_credentials
 from src.feed_discover import discover_feeds
 from src.feed_import import import_local_feed, import_opml
-from src.models import Feed
+from src.models import Feed, Rule
 from src.theme import load_theme
 from src.url_validation import check_feed_connectivity, validate_feed_url
 
@@ -160,6 +162,58 @@ class SettingsDialog(QDialog):
         feed_group.setLayout(feed_layout)
         layout.addWidget(feed_group)
 
+        # Rules
+        rules_group = QGroupBox("Rules")
+        rules_layout = QVBoxLayout()
+
+        self._rules_table = QTableWidget(0, 6)
+        self._rules_table.setHorizontalHeaderLabels(
+            ["Name", "Feed", "Keyword", "Status", "Sound", "Notif/Color"]
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Interactive,
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Interactive,
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Interactive,
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.ResizeToContents,
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.ResizeMode.Stretch,
+        )
+        self._rules_table.horizontalHeader().setSectionResizeMode(
+            5, QHeaderView.ResizeMode.ResizeToContents,
+        )
+        self._rules_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows,
+        )
+        self._rules_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers,
+        )
+        self._rules_table.setMinimumHeight(120)
+        rules_layout.addWidget(self._rules_table)
+
+        rules_buttons = QHBoxLayout()
+        self._add_rule_btn = QPushButton("Add")
+        self._add_rule_btn.clicked.connect(self._add_rule)
+        rules_buttons.addWidget(self._add_rule_btn)
+
+        self._edit_rule_btn = QPushButton("Edit")
+        self._edit_rule_btn.clicked.connect(self._edit_rule)
+        rules_buttons.addWidget(self._edit_rule_btn)
+
+        self._remove_rule_btn = QPushButton("Remove")
+        self._remove_rule_btn.clicked.connect(self._remove_rule)
+        rules_buttons.addWidget(self._remove_rule_btn)
+
+        rules_layout.addLayout(rules_buttons)
+        rules_group.setLayout(rules_layout)
+        layout.addWidget(rules_group)
+
         # Dialog buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -183,6 +237,10 @@ class SettingsDialog(QDialog):
             item = QListWidgetItem(f"{feed.name} — {feed.url}")
             item.setData(Qt.ItemDataRole.UserRole, feed)
             self._feed_list.addItem(item)
+
+        self._rules_table.setRowCount(0)
+        for rule in self.config.rules:
+            self._append_rule_row(rule)
 
     def _browse_sound(self, event_type: str) -> None:
         """Open a file dialog to select a WAV sound file.
@@ -344,6 +402,105 @@ class SettingsDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, feed)
             self._feed_list.addItem(item)
 
+    def _append_rule_row(self, rule: Rule) -> None:
+        """Append *rule* as a new row in the rules table.
+
+        Args:
+            rule: The Rule to display.
+        """
+        row = self._rules_table.rowCount()
+        self._rules_table.insertRow(row)
+
+        name_item = QTableWidgetItem(rule.name if rule.enabled else f"[off] {rule.name}")
+        name_item.setData(Qt.ItemDataRole.UserRole, rule)
+        self._rules_table.setItem(row, 0, name_item)
+
+        feed_text = rule.feed_url or "(all feeds)"
+        # Shorten long URLs for display
+        if rule.feed_url and len(rule.feed_url) > 30:
+            feed_text = "…" + rule.feed_url[-28:]
+        self._rules_table.setItem(row, 1, QTableWidgetItem(feed_text))
+        self._rules_table.setItem(row, 2, QTableWidgetItem(rule.keyword or ""))
+        self._rules_table.setItem(row, 3, QTableWidgetItem(rule.status or "any"))
+
+        sound_text = rule.sound_file or ""
+        if sound_text and len(sound_text) > 20:
+            sound_text = "…" + sound_text[-18:]
+        self._rules_table.setItem(row, 4, QTableWidgetItem(sound_text))
+
+        actions: list[str] = []
+        if rule.notification:
+            actions.append("notif")
+        if rule.highlight_color:
+            actions.append(rule.highlight_color)
+        self._rules_table.setItem(row, 5, QTableWidgetItem(", ".join(actions)))
+
+    def _get_feed_urls(self) -> list[str]:
+        """Return feed URLs currently listed in the feeds list widget.
+
+        Returns:
+            List of feed URL strings.
+        """
+        urls: list[str] = []
+        for i in range(self._feed_list.count()):
+            item = self._feed_list.item(i)
+            if item:
+                feed = item.data(Qt.ItemDataRole.UserRole)
+                urls.append(feed.url)
+        return urls
+
+    def _add_rule(self) -> None:
+        """Open the rule editor to create a new rule."""
+        dialog = RuleEditDialog(feed_urls=self._get_feed_urls(), parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            rule = dialog.get_rule()
+            self._append_rule_row(rule)
+
+    def _edit_rule(self) -> None:
+        """Open the rule editor for the currently selected rule row."""
+        row = self._rules_table.currentRow()
+        if row < 0:
+            return
+        item = self._rules_table.item(row, 0)
+        if not item:
+            return
+        rule = item.data(Qt.ItemDataRole.UserRole)
+        dialog = RuleEditDialog(
+            rule=rule, feed_urls=self._get_feed_urls(), parent=self
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            updated = dialog.get_rule()
+            self._rules_table.removeRow(row)
+            self._rules_table.insertRow(row)
+            name_item = QTableWidgetItem(
+                updated.name if updated.enabled else f"[off] {updated.name}"
+            )
+            name_item.setData(Qt.ItemDataRole.UserRole, updated)
+            self._rules_table.setItem(row, 0, name_item)
+            feed_text = updated.feed_url or "(all feeds)"
+            if updated.feed_url and len(updated.feed_url) > 30:
+                feed_text = "…" + updated.feed_url[-28:]
+            self._rules_table.setItem(row, 1, QTableWidgetItem(feed_text))
+            self._rules_table.setItem(row, 2, QTableWidgetItem(updated.keyword or ""))
+            self._rules_table.setItem(row, 3, QTableWidgetItem(updated.status or "any"))
+            sound_text = updated.sound_file or ""
+            if sound_text and len(sound_text) > 20:
+                sound_text = "…" + sound_text[-18:]
+            self._rules_table.setItem(row, 4, QTableWidgetItem(sound_text))
+            actions: list[str] = []
+            if updated.notification:
+                actions.append("notif")
+            if updated.highlight_color:
+                actions.append(updated.highlight_color)
+            self._rules_table.setItem(row, 5, QTableWidgetItem(", ".join(actions)))
+            self._rules_table.setCurrentCell(row, 0)
+
+    def _remove_rule(self) -> None:
+        """Remove the currently selected rule row."""
+        row = self._rules_table.currentRow()
+        if row >= 0:
+            self._rules_table.removeRow(row)
+
     def _on_theme_changed(self, name: str) -> None:
         """Apply theme immediately for live preview."""
         from PySide6.QtWidgets import QApplication
@@ -367,6 +524,13 @@ class SettingsDialog(QDialog):
             if item:
                 feed = item.data(Qt.ItemDataRole.UserRole)
                 self.config.feeds.append(feed)
+
+        self.config.rules = []
+        for row in range(self._rules_table.rowCount()):
+            item = self._rules_table.item(row, 0)
+            if item:
+                rule = item.data(Qt.ItemDataRole.UserRole)
+                self.config.rules.append(rule)
 
         self.accept()
 
@@ -791,3 +955,199 @@ class FeedEditDialog(QDialog):
             QMessageBox.warning(self, "Invalid Feed URL", error)
             return
         self.accept()
+
+
+class RuleEditDialog(QDialog):
+    """Dialog for creating or editing a single alert rule.
+
+    Attributes:
+        _rule: The Rule being edited (or ``None`` for a new rule).
+        _feed_urls: Feed URLs to populate the feed dropdown.
+    """
+
+    def __init__(
+        self,
+        rule: Rule | None = None,
+        feed_urls: list[str] | None = None,
+        parent: QDialog | None = None,
+    ) -> None:
+        """Initialise the rule editor.
+
+        Args:
+            rule: Existing Rule to edit, or ``None`` to create a new one.
+            feed_urls: Feed URLs for the feed condition dropdown.
+            parent: Optional parent widget.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Edit Rule" if rule else "Add Rule")
+        self.setMinimumWidth(480)
+        self._rule = rule
+        self._feed_urls = feed_urls or []
+        self._highlight_color: str | None = rule.highlight_color if rule else None
+        self._setup_ui()
+        if rule:
+            self._load_rule(rule)
+
+    def _setup_ui(self) -> None:
+        """Build the rule editor UI."""
+        layout = QFormLayout(self)
+
+        # Name + enabled
+        name_row = QHBoxLayout()
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Rule name")
+        name_row.addWidget(self._name_edit)
+        self._enabled_check = QCheckBox("Enabled")
+        self._enabled_check.setChecked(True)
+        name_row.addWidget(self._enabled_check)
+        layout.addRow("Name:", name_row)
+
+        # --- Conditions ---
+        layout.addRow(QLabel("<b>Conditions</b> (all must match; leave blank to skip)"))
+
+        self._feed_combo = QComboBox()
+        self._feed_combo.addItem("All feeds", None)
+        for url in self._feed_urls:
+            self._feed_combo.addItem(url, url)
+        layout.addRow("Feed:", self._feed_combo)
+
+        self._keyword_edit = QLineEdit()
+        self._keyword_edit.setPlaceholderText("Substring in title (case-insensitive)")
+        layout.addRow("Keyword:", self._keyword_edit)
+
+        self._status_combo = QComboBox()
+        self._status_combo.addItems(["Any", "stable", "failed", "unstable"])
+        layout.addRow("Jenkins status:", self._status_combo)
+
+        # --- Actions ---
+        layout.addRow(QLabel("<b>Actions</b>"))
+
+        sound_row = QHBoxLayout()
+        self._sound_edit = QLineEdit()
+        self._sound_edit.setReadOnly(True)
+        self._sound_edit.setPlaceholderText("No extra sound")
+        sound_row.addWidget(self._sound_edit)
+        sound_browse = QPushButton("Browse…")
+        sound_browse.clicked.connect(self._browse_sound)
+        sound_row.addWidget(sound_browse)
+        sound_clear = QPushButton("Clear")
+        sound_clear.clicked.connect(lambda: self._sound_edit.clear())
+        sound_row.addWidget(sound_clear)
+        layout.addRow("Sound file:", sound_row)
+
+        self._notification_check = QCheckBox("Send desktop notification")
+        layout.addRow("Notification:", self._notification_check)
+
+        color_row = QHBoxLayout()
+        self._color_btn = QPushButton("Choose color…")
+        self._color_btn.clicked.connect(self._choose_color)
+        color_row.addWidget(self._color_btn)
+        self._color_clear_btn = QPushButton("Clear")
+        self._color_clear_btn.clicked.connect(self._clear_color)
+        color_row.addWidget(self._color_clear_btn)
+        color_row.addStretch()
+        layout.addRow("Highlight color:", color_row)
+        self._update_color_btn()
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _load_rule(self, rule: Rule) -> None:
+        """Populate UI fields from an existing Rule.
+
+        Args:
+            rule: The Rule to load.
+        """
+        self._name_edit.setText(rule.name)
+        self._enabled_check.setChecked(rule.enabled)
+
+        # Feed dropdown
+        if rule.feed_url:
+            idx = self._feed_combo.findData(rule.feed_url)
+            if idx >= 0:
+                self._feed_combo.setCurrentIndex(idx)
+            else:
+                # Feed URL not in current list — add it
+                self._feed_combo.addItem(rule.feed_url, rule.feed_url)
+                self._feed_combo.setCurrentIndex(self._feed_combo.count() - 1)
+        else:
+            self._feed_combo.setCurrentIndex(0)  # "All feeds"
+
+        self._keyword_edit.setText(rule.keyword or "")
+
+        if rule.status:
+            idx = self._status_combo.findText(rule.status, Qt.MatchFlag.MatchFixedString)
+            if idx >= 0:
+                self._status_combo.setCurrentIndex(idx)
+        else:
+            self._status_combo.setCurrentIndex(0)  # "Any"
+
+        self._sound_edit.setText(rule.sound_file or "")
+        self._notification_check.setChecked(rule.notification)
+        self._highlight_color = rule.highlight_color
+        self._update_color_btn()
+
+    def _browse_sound(self) -> None:
+        """Open a file dialog to pick a WAV file for this rule."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Sound File", "", "WAV Files (*.wav)"
+        )
+        if path:
+            self._sound_edit.setText(path)
+
+    def _choose_color(self) -> None:
+        """Open a color dialog to pick the highlight color."""
+        initial = QColor(self._highlight_color) if self._highlight_color else QColor()
+        color = QColorDialog.getColor(initial, self, "Choose Highlight Color")
+        if color.isValid():
+            self._highlight_color = color.name()
+            self._update_color_btn()
+
+    def _clear_color(self) -> None:
+        """Clear the highlight color selection."""
+        self._highlight_color = None
+        self._update_color_btn()
+
+    def _update_color_btn(self) -> None:
+        """Refresh the color button label and background to show the current color."""
+        if self._highlight_color:
+            self._color_btn.setText(self._highlight_color)
+            self._color_btn.setStyleSheet(
+                f"background-color: {self._highlight_color}; color: #000;"
+            )
+        else:
+            self._color_btn.setText("Choose color…")
+            self._color_btn.setStyleSheet("")
+
+    def _validate_and_accept(self) -> None:
+        """Validate required fields then accept."""
+        if not self._name_edit.text().strip():
+            QMessageBox.warning(self, "Invalid Rule", "Rule name must not be empty.")
+            return
+        self.accept()
+
+    def get_rule(self) -> Rule:
+        """Build and return a Rule from the current dialog state.
+
+        Returns:
+            A new Rule instance reflecting the user's input.
+        """
+        feed_url = self._feed_combo.currentData()
+        keyword = self._keyword_edit.text().strip() or None
+        status_text = self._status_combo.currentText()
+        status = None if status_text == "Any" else status_text
+        sound_file = self._sound_edit.text().strip() or None
+        return Rule(
+            name=self._name_edit.text().strip(),
+            enabled=self._enabled_check.isChecked(),
+            feed_url=feed_url,
+            keyword=keyword,
+            status=status,
+            sound_file=sound_file,
+            notification=self._notification_check.isChecked(),
+            highlight_color=self._highlight_color,
+        )
