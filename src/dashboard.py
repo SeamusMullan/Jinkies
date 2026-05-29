@@ -585,7 +585,7 @@ class Dashboard(QMainWindow):
         result = jenkins_status(entry.title)
         if result:
             kw, (r, g, b) = result
-            alpha = 70 if entry.seen else 130
+            alpha = 120 if entry.seen else 190
             bg = QColor(r, g, b, alpha)
             # Saturated foreground for the status cell so it reads clearly
             fg = QColor(r, g, b).darker(140)
