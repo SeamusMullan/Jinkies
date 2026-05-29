@@ -89,7 +89,7 @@ class SettingsDialog(QDialog):
         display_layout.addRow("Page size:", self._page_size_spinner)
 
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["dark", "light"])
+        self._theme_combo.addItems(["aero", "dark", "light"])
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
         display_layout.addRow("Theme:", self._theme_combo)
 

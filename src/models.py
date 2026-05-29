@@ -327,7 +327,7 @@ class AppConfig:
     max_entries: int = 10_000
     seen_ids_max_age_days: int = 30
     page_size: int = 100
-    theme: str = "dark"
+    theme: str = "aero"
     show_tray_badge: bool = True
     rules: list[Rule] = field(default_factory=list)
 
@@ -438,7 +438,7 @@ class AppConfig:
             max_entries=raw_max_entries,
             seen_ids_max_age_days=raw_max_age,
             page_size=raw_page_size,
-            theme=data.get("theme", "dark"),
+            theme=data.get("theme", "aero"),
             show_tray_badge=bool(data.get("show_tray_badge", True)),
             rules=[Rule.from_dict(r) for r in data.get("rules", [])],
         )

@@ -35,6 +35,7 @@ from src.feed_poller import FeedPoller
 from src.models import Feed, FeedEntry
 from src.notifier import Notifier
 from src.settings_dialog import FeedEditDialog, ImportPreviewDialog, SettingsDialog
+from src.platform_effects import apply_window_effects
 from src.theme import load_theme
 
 
@@ -672,6 +673,7 @@ class JinkiesApp:
             The application exit code.
         """
         self.dashboard.show()
+        apply_window_effects(self.dashboard)
         return self.app.exec()
 
 
