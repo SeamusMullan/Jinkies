@@ -214,21 +214,21 @@ class Dashboard(QMainWindow):
         self.addToolBar(toolbar)
 
         self._add_feed_action = toolbar.addAction(
-            qta.icon("fa6s.plus", color="#cccccc"), "Add Feed"
+            qta.icon("fa6s.plus", color="#1a3a5c"), "Add Feed"
         )
         self._add_feed_action.setShortcut(QKeySequence.StandardKey.New)
         self._add_feed_action.setToolTip("Add a new RSS/Atom feed to monitor")
         self._add_feed_action.triggered.connect(self.add_feed_requested.emit)
 
         self._remove_feed_action = toolbar.addAction(
-            qta.icon("fa6s.minus", color="#cccccc"), "Remove Feed"
+            qta.icon("fa6s.minus", color="#1a3a5c"), "Remove Feed"
         )
         self._remove_feed_action.setShortcut(QKeySequence(Qt.Key.Key_Delete))
         self._remove_feed_action.setToolTip("Remove the selected feed(s)")
         self._remove_feed_action.triggered.connect(self._on_remove_feed_clicked)
 
         self._import_feeds_action = toolbar.addAction(
-            qta.icon("fa6s.file-import", color="#cccccc"), "Import Feeds"
+            qta.icon("fa6s.file-import", color="#1a3a5c"), "Import Feeds"
         )
         self._import_feeds_action.setShortcut(QKeySequence("Ctrl+I"))
         self._import_feeds_action.setToolTip("Import feeds from an OPML file")
@@ -237,7 +237,7 @@ class Dashboard(QMainWindow):
         toolbar.addSeparator()
 
         self._settings_action = toolbar.addAction(
-            qta.icon("fa6s.gear", color="#cccccc"), "Settings"
+            qta.icon("fa6s.gear", color="#1a3a5c"), "Settings"
         )
         self._settings_action.setShortcut(QKeySequence("Ctrl+,"))
         self._settings_action.setToolTip("Open application settings")
@@ -246,7 +246,7 @@ class Dashboard(QMainWindow):
         toolbar.addSeparator()
 
         self._pause_action = toolbar.addAction(
-            qta.icon("fa6s.pause", color="#cccccc"), "Pause"
+            qta.icon("fa6s.pause", color="#1a3a5c"), "Pause"
         )
         self._pause_action.setShortcut(QKeySequence("Ctrl+P"))
         self._pause_action.setToolTip("Pause or resume feed polling")
@@ -255,7 +255,7 @@ class Dashboard(QMainWindow):
         toolbar.addSeparator()
 
         self._mark_all_seen_action = toolbar.addAction(
-            qta.icon("fa6s.check-double", color="#cccccc"), "Mark All Seen"
+            qta.icon("fa6s.check-double", color="#1a3a5c"), "Mark All Seen"
         )
         self._mark_all_seen_action.setToolTip("Mark all current entries as seen")
         self._mark_all_seen_action.triggered.connect(self._on_mark_all_seen_clicked)
@@ -927,7 +927,7 @@ class Dashboard(QMainWindow):
         menu.addSeparator()
 
         mark_selected_action = menu.addAction(
-            qta.icon("fa6s.eye", color="#cccccc"), "Mark Selected as Seen"
+            qta.icon("fa6s.eye", color="#1a3a5c"), "Mark Selected as Seen"
         )
         mark_selected_action.triggered.connect(lambda: self._mark_selected_seen(table))
 
@@ -939,7 +939,7 @@ class Dashboard(QMainWindow):
         else:
             mark_all_label = f'Mark All in "{current_filter}" as Seen'
         mark_all_action = menu.addAction(
-            qta.icon("fa6s.check-double", color="#cccccc"), mark_all_label
+            qta.icon("fa6s.check-double", color="#1a3a5c"), mark_all_label
         )
         mark_all_action.triggered.connect(self._on_mark_all_seen_clicked)
 
@@ -1066,7 +1066,7 @@ class Dashboard(QMainWindow):
         self._is_paused = not self._is_paused
         self._pause_action.setText("Resume" if self._is_paused else "Pause")
         icon_name = "fa6s.play" if self._is_paused else "fa6s.pause"
-        self._pause_action.setIcon(qta.icon(icon_name, color="#cccccc"))
+        self._pause_action.setIcon(qta.icon(icon_name, color="#1a3a5c"))
         self._update_stats()
         self.pause_requested.emit()
 
@@ -1079,7 +1079,7 @@ class Dashboard(QMainWindow):
         self._is_paused = paused
         self._pause_action.setText("Resume" if paused else "Pause")
         icon_name = "fa6s.play" if paused else "fa6s.pause"
-        self._pause_action.setIcon(qta.icon(icon_name, color="#cccccc"))
+        self._pause_action.setIcon(qta.icon(icon_name, color="#1a3a5c"))
         self._update_stats()
 
     def reset_daily_stats(self) -> None:
