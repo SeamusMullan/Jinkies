@@ -38,6 +38,7 @@ _JENKINS_STATUS_COLORS: dict[str, tuple[int, int, int]] = {
     "stable": (40, 167, 69),
     "success": (40, 167, 69),
     "fixed": (40, 167, 69),
+    "back to normal": (40, 167, 69),
     "broken": (220, 53, 69),
     "failed": (220, 53, 69),
     "failure": (220, 53, 69),
@@ -46,8 +47,10 @@ _JENKINS_STATUS_COLORS: dict[str, tuple[int, int, int]] = {
     "cancelled": (108, 117, 125),
 }
 
+# Match "(keyword)" or "(keyword since ...)" or "(keyword for a long time)" etc.
+# Longest alternatives first to avoid partial matches (e.g. "back to normal" before "back").
 _JENKINS_STATUS_RE = re.compile(
-    r"\((" + "|".join(_JENKINS_STATUS_COLORS) + r")\)\s*$",
+    r"\((" + "|".join(sorted(_JENKINS_STATUS_COLORS, key=len, reverse=True)) + r")[^)]*\)\s*$",
     re.IGNORECASE,
 )
 

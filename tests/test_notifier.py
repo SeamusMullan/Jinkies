@@ -175,6 +175,30 @@ class TestJenkinsAccent:
     def test_case_insensitive(self):
         assert _jenkins_accent("Build (STABLE)") is not None
 
+    def test_broken_since_this_build(self):
+        r, g, b = _jenkins_accent("job #58 (broken since this build)")
+        assert r > g and r > b
+
+    def test_broken_since_build_n(self):
+        r, g, b = _jenkins_accent("job #58 (broken since build #45 -> some params)")
+        assert r > g and r > b
+
+    def test_broken_for_a_long_time(self):
+        r, g, b = _jenkins_accent("job #58 (broken for a long time)")
+        assert r > g and r > b
+
+    def test_back_to_normal(self):
+        r, g, b = _jenkins_accent("job #58 (back to normal)")
+        assert g > r and g > b
+
+    def test_real_jenkins_title_stable(self):
+        title = "Experiments » smullan » pub » IE-Packages » Release » OpenVINO-Ubuntu24 #556 -> Compiler: intel-innersource:abc, Flavor: dynamic_internal (stable)"
+        assert _jenkins_accent(title) is not None
+
+    def test_real_jenkins_title_broken_since(self):
+        title = "Experiments » smullan » pub » IE-Packages » Release » OpenVINO-Windows10 #58 -> Compiler: intel-innersource:abc (broken since this build)"
+        assert _jenkins_accent(title) is not None
+
 
 class TestNotifier:
     def test_native_notifier_uses_tray(self, qtbot):

@@ -1016,7 +1016,7 @@ class RuleEditDialog(QDialog):
         layout.addRow("Keyword:", self._keyword_edit)
 
         self._status_combo = QComboBox()
-        self._status_combo.addItems(["Any", "stable", "failed", "unstable"])
+        self._status_combo.addItems(["Any", "stable", "back to normal", "broken", "failed", "unstable", "aborted"])
         layout.addRow("Jenkins status:", self._status_combo)
 
         # --- Actions ---
