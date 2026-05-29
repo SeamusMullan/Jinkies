@@ -11,7 +11,7 @@ import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QPoint, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QKeyEvent, QKeySequence
+from PySide6.QtGui import QColor, QDesktopServices, QKeyEvent, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStatusBar,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -47,6 +49,15 @@ from src.notifier import jenkins_status
 if TYPE_CHECKING:
     from src.models import Feed
 
+
+class _RowColorDelegate(QStyledItemDelegate):
+    """Paints row background from Qt.BackgroundRole, bypassing QSS overrides."""
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: object) -> None:
+        bg = index.data(Qt.ItemDataRole.BackgroundRole)  # type: ignore[union-attr]
+        if bg is not None and isinstance(bg, QColor) and bg.isValid():
+            painter.fillRect(option.rect, bg)  # type: ignore[arg-type]
+        super().paint(painter, option, index)
 
 
 class Dashboard(QMainWindow):
@@ -275,6 +286,7 @@ class Dashboard(QMainWindow):
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSortingEnabled(True)
+        table.setItemDelegate(_RowColorDelegate(table))
         table.doubleClicked.connect(lambda idx, t=table: self._on_entry_double_click(idx, t))
         table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         table.customContextMenuRequested.connect(
