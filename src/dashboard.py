@@ -53,11 +53,14 @@ if TYPE_CHECKING:
 class _RowColorDelegate(QStyledItemDelegate):
     """Paints row background from Qt.BackgroundRole, bypassing QSS overrides."""
 
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: object) -> None:
+    def initStyleOption(self, option: QStyleOptionViewItem, index: object) -> None:
+        super().initStyleOption(option, index)
         bg = index.data(Qt.ItemDataRole.BackgroundRole)  # type: ignore[union-attr]
-        if bg is not None and isinstance(bg, QColor) and bg.isValid():
-            painter.fillRect(option.rect, bg)  # type: ignore[arg-type]
-        super().paint(painter, option, index)
+        if bg is not None:
+            from PySide6.QtGui import QBrush
+            brush = bg if isinstance(bg, QBrush) else QBrush(bg)
+            if brush.color().isValid():
+                option.backgroundBrush = brush  # type: ignore[attr-defined]
 
 
 class Dashboard(QMainWindow):
@@ -597,7 +600,7 @@ class Dashboard(QMainWindow):
         result = jenkins_status(entry.title)
         if result:
             kw, (r, g, b) = result
-            alpha = 120 if entry.seen else 190
+            alpha = 60 if entry.seen else 110
             bg = QColor(r, g, b, alpha)
             # Saturated foreground for the status cell so it reads clearly
             fg = QColor(r, g, b).darker(140)
