@@ -323,7 +323,7 @@ class AppConfig:
         "new_entry": "new_entry.wav",
         "error": "error.wav",
     })
-    notification_style: str = "native"
+    notification_style: str = "custom"
     max_entries: int = 10_000
     seen_ids_max_age_days: int = 30
     page_size: int = 100

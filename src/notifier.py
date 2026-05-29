@@ -234,8 +234,8 @@ class NotificationDialog(QDialog):
 class Notifier:
     """Cross-platform notification dispatcher.
 
-    Uses QSystemTrayIcon.showMessage on Linux/macOS and
-    NotificationDialog on Windows.
+    Uses QSystemTrayIcon.showMessage for "native" style (all platforms),
+    and NotificationDialog for "custom" style (all platforms).
 
     Attributes:
         _tray_icon: Reference to the system tray icon.
@@ -248,7 +248,7 @@ class Notifier:
         style: str = "native",
     ) -> None:
         self._tray_icon = tray_icon
-        self._use_custom = style == "custom" or (style == "native" and sys.platform == "win32")
+        self._use_custom = style == "custom"
 
     def notify(self, title: str, body: str, url: str | None = None, icon: QIcon | None = None) -> None:
         """Show a desktop notification.
