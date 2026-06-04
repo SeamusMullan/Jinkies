@@ -655,3 +655,45 @@ def load_theme(name: str = "aero") -> str:
     if name == "dark":
         return _DARK_QSS
     return ""
+
+
+def detect_system_theme() -> str:
+    """Return the OS colour scheme as a theme name.
+
+    Uses Qt's ``styleHints().colorScheme()`` (Qt 6.5+).  When the system is in
+    dark mode this returns ``"dark"``; otherwise ``"aero"``.  If the colour
+    scheme cannot be determined, falls back to ``"aero"``.
+
+    Returns:
+        ``"dark"`` or ``"aero"``.
+    """
+    try:
+        from PySide6.QtCore import Qt  # noqa: PLC0415
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        app = QApplication.instance()
+        if app is not None:
+            scheme = app.styleHints().colorScheme()
+            if scheme == Qt.ColorScheme.Dark:
+                return "dark"
+    except Exception:  # noqa: BLE001, S110 — best-effort OS detection
+        pass
+    return "aero"
+
+
+def resolve_theme(name: str = "aero") -> str:
+    """Return a QSS stylesheet, resolving the special ``"system"`` theme.
+
+    When *name* is ``"system"`` the OS colour scheme is detected via
+    :func:`detect_system_theme` and the corresponding stylesheet returned.
+    All other names are passed straight to :func:`load_theme`.
+
+    Args:
+        name: Theme name, or ``"system"`` to follow the OS preference.
+
+    Returns:
+        A QSS stylesheet string.
+    """
+    if name == "system":
+        return load_theme(detect_system_theme())
+    return load_theme(name)

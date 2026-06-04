@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -38,11 +39,14 @@ from src.credential_store import delete_credentials, get_credentials, store_cred
 from src.feed_discover import discover_feeds
 from src.feed_import import import_local_feed, import_opml
 from src.models import Feed, Rule
-from src.theme import load_theme
+from src.notify_sinks import PROVIDER_PRESETS, SinkConfig, build_sink
+from src.sink_secret_store import store_sink_secret
+from src.theme import resolve_theme
 from src.url_validation import check_feed_connectivity, validate_feed_url
 
 if TYPE_CHECKING:
-    from src.models import AppConfig
+    from src.audio import AudioPlayer
+    from src.models import AppConfig, FeedEntry
 
 
 class SettingsDialog(QDialog):
@@ -52,15 +56,25 @@ class SettingsDialog(QDialog):
         config: The current application config (modified in place on accept).
     """
 
-    def __init__(self, config: AppConfig, parent: QDialog | None = None) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        parent: QDialog | None = None,
+        audio: AudioPlayer | None = None,
+        sample_entries: list[FeedEntry] | None = None,
+    ) -> None:
         """Initialize the settings dialog.
 
         Args:
             config: The current AppConfig to edit.
             parent: Optional parent widget.
+            audio: Optional audio player, used for sound-preview buttons.
+            sample_entries: Current dashboard entries, used for rule dry-run.
         """
         super().__init__(parent)
         self.config = config
+        self._audio = audio
+        self._sample_entries = sample_entries or []
         self.setWindowTitle("Jinkies — Settings")
         self.setMinimumWidth(500)
         self._setup_ui()
@@ -89,7 +103,7 @@ class SettingsDialog(QDialog):
         display_layout.addRow("Page size:", self._page_size_spinner)
 
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["aero", "dark", "light"])
+        self._theme_combo.addItems(["aero", "dark", "light", "system"])
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
         display_layout.addRow("Theme:", self._theme_combo)
 
@@ -107,18 +121,26 @@ class SettingsDialog(QDialog):
         self._new_entry_sound.setReadOnly(True)
         new_entry_browse = QPushButton("Browse...")
         new_entry_browse.clicked.connect(lambda: self._browse_sound("new_entry"))
+        new_entry_preview = QPushButton("Preview")
+        new_entry_preview.clicked.connect(
+            lambda: self._preview_sound(self._new_entry_sound)
+        )
         new_entry_row = QHBoxLayout()
         new_entry_row.addWidget(self._new_entry_sound)
         new_entry_row.addWidget(new_entry_browse)
+        new_entry_row.addWidget(new_entry_preview)
         sound_layout.addRow("New entry sound:", new_entry_row)
 
         self._error_sound = QLineEdit()
         self._error_sound.setReadOnly(True)
         error_browse = QPushButton("Browse...")
         error_browse.clicked.connect(lambda: self._browse_sound("error"))
+        error_preview = QPushButton("Preview")
+        error_preview.clicked.connect(lambda: self._preview_sound(self._error_sound))
         error_row = QHBoxLayout()
         error_row.addWidget(self._error_sound)
         error_row.addWidget(error_browse)
+        error_row.addWidget(error_preview)
         sound_layout.addRow("Error sound:", error_row)
 
         sound_group.setLayout(sound_layout)
@@ -214,6 +236,44 @@ class SettingsDialog(QDialog):
         rules_group.setLayout(rules_layout)
         layout.addWidget(rules_group)
 
+        # Sinks (webhook / script notification destinations)
+        sinks_group = QGroupBox("Sinks (Discord / Slack / ntfy / webhook / script)")
+        sinks_layout = QVBoxLayout()
+
+        self._sinks_table = QTableWidget(0, 4)
+        self._sinks_table.setHorizontalHeaderLabels(
+            ["Name", "Provider", "Target", "Enabled"]
+        )
+        self._sinks_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch,
+        )
+        self._sinks_table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows,
+        )
+        self._sinks_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.NoEditTriggers,
+        )
+        self._sinks_table.setMinimumHeight(100)
+        sinks_layout.addWidget(self._sinks_table)
+
+        sinks_buttons = QHBoxLayout()
+        add_sink_btn = QPushButton("Add")
+        add_sink_btn.clicked.connect(self._add_sink)
+        sinks_buttons.addWidget(add_sink_btn)
+        edit_sink_btn = QPushButton("Edit")
+        edit_sink_btn.clicked.connect(self._edit_sink)
+        sinks_buttons.addWidget(edit_sink_btn)
+        remove_sink_btn = QPushButton("Remove")
+        remove_sink_btn.clicked.connect(self._remove_sink)
+        sinks_buttons.addWidget(remove_sink_btn)
+        test_sink_btn = QPushButton("Send Test")
+        test_sink_btn.clicked.connect(self._test_sink)
+        sinks_buttons.addWidget(test_sink_btn)
+
+        sinks_layout.addLayout(sinks_buttons)
+        sinks_group.setLayout(sinks_layout)
+        layout.addWidget(sinks_group)
+
         # Dialog buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -241,6 +301,10 @@ class SettingsDialog(QDialog):
         self._rules_table.setRowCount(0)
         for rule in self.config.rules:
             self._append_rule_row(rule)
+
+        self._sinks_table.setRowCount(0)
+        for sink in self.config.sinks:
+            self._append_sink_row(sink)
 
     def _browse_sound(self, event_type: str) -> None:
         """Open a file dialog to select a WAV sound file.
@@ -451,7 +515,12 @@ class SettingsDialog(QDialog):
 
     def _add_rule(self) -> None:
         """Open the rule editor to create a new rule."""
-        dialog = RuleEditDialog(feed_urls=self._get_feed_urls(), parent=self)
+        dialog = RuleEditDialog(
+            feed_urls=self._get_feed_urls(),
+            sink_names=self._sink_names(),
+            sample_entries=self._sample_entries,
+            parent=self,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             rule = dialog.get_rule()
             self._append_rule_row(rule)
@@ -466,7 +535,11 @@ class SettingsDialog(QDialog):
             return
         rule = item.data(Qt.ItemDataRole.UserRole)
         dialog = RuleEditDialog(
-            rule=rule, feed_urls=self._get_feed_urls(), parent=self
+            rule=rule,
+            feed_urls=self._get_feed_urls(),
+            sink_names=self._sink_names(),
+            sample_entries=self._sample_entries,
+            parent=self,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             updated = dialog.get_rule()
@@ -501,12 +574,124 @@ class SettingsDialog(QDialog):
         if row >= 0:
             self._rules_table.removeRow(row)
 
+    def _preview_sound(self, line_edit: QLineEdit) -> None:
+        """Play the sound file named in *line_edit* for previewing.
+
+        Args:
+            line_edit: The widget holding the WAV file path.
+        """
+        path = line_edit.text().strip()
+        if not path:
+            QMessageBox.information(self, "Preview", "No sound file selected.")
+            return
+        if self._audio is None:
+            QMessageBox.information(
+                self, "Preview", "Audio is unavailable in this context."
+            )
+            return
+        self._audio.play("new_entry", sound_file=path)
+
+    # --- Sink management ---
+
+    def _sink_names(self) -> list[str]:
+        """Return the names of sinks currently in the sinks table."""
+        names: list[str] = []
+        for row in range(self._sinks_table.rowCount()):
+            item = self._sinks_table.item(row, 0)
+            if item:
+                cfg = item.data(Qt.ItemDataRole.UserRole)
+                if cfg:
+                    names.append(cfg.name)
+        return names
+
+    def _append_sink_row(self, cfg: SinkConfig) -> None:
+        """Append *cfg* as a new row in the sinks table."""
+        row = self._sinks_table.rowCount()
+        self._sinks_table.insertRow(row)
+        name_item = QTableWidgetItem(cfg.name)
+        name_item.setData(Qt.ItemDataRole.UserRole, cfg)
+        self._sinks_table.setItem(row, 0, name_item)
+        preset = PROVIDER_PRESETS.get(cfg.provider)
+        self._sinks_table.setItem(
+            row, 1, QTableWidgetItem(preset.name if preset else cfg.provider)
+        )
+        target = cfg.script if cfg.transport == "script" else cfg.url
+        if len(target) > 40:
+            target = "…" + target[-38:]
+        self._sinks_table.setItem(row, 2, QTableWidgetItem(target))
+        self._sinks_table.setItem(
+            row, 3, QTableWidgetItem("yes" if cfg.enabled else "no")
+        )
+
+    def _refresh_sink_row(self, row: int, cfg: SinkConfig) -> None:
+        """Rewrite an existing sinks-table row with *cfg*."""
+        self._sinks_table.removeRow(row)
+        self._sinks_table.insertRow(row)
+        name_item = QTableWidgetItem(cfg.name)
+        name_item.setData(Qt.ItemDataRole.UserRole, cfg)
+        self._sinks_table.setItem(row, 0, name_item)
+        preset = PROVIDER_PRESETS.get(cfg.provider)
+        self._sinks_table.setItem(
+            row, 1, QTableWidgetItem(preset.name if preset else cfg.provider)
+        )
+        target = cfg.script if cfg.transport == "script" else cfg.url
+        if len(target) > 40:
+            target = "…" + target[-38:]
+        self._sinks_table.setItem(row, 2, QTableWidgetItem(target))
+        self._sinks_table.setItem(
+            row, 3, QTableWidgetItem("yes" if cfg.enabled else "no")
+        )
+        self._sinks_table.setCurrentCell(row, 0)
+
+    def _add_sink(self) -> None:
+        """Open the sink editor to create a new sink."""
+        dialog = SinkEditDialog(existing_names=self._sink_names(), parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._append_sink_row(dialog.get_sink())
+
+    def _edit_sink(self) -> None:
+        """Open the sink editor for the selected sink row."""
+        row = self._sinks_table.currentRow()
+        if row < 0:
+            return
+        item = self._sinks_table.item(row, 0)
+        if not item:
+            return
+        cfg = item.data(Qt.ItemDataRole.UserRole)
+        names = [n for n in self._sink_names() if n != cfg.name]
+        dialog = SinkEditDialog(sink=cfg, existing_names=names, parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._refresh_sink_row(row, dialog.get_sink())
+
+    def _remove_sink(self) -> None:
+        """Remove the selected sink row."""
+        row = self._sinks_table.currentRow()
+        if row >= 0:
+            self._sinks_table.removeRow(row)
+
+    def _test_sink(self) -> None:
+        """Send a sample payload through the selected sink and show the result."""
+        row = self._sinks_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Send Test", "Select a sink first.")
+            return
+        item = self._sinks_table.item(row, 0)
+        cfg = item.data(Qt.ItemDataRole.UserRole)
+        result = build_sink(cfg).test()
+        if result.ok:
+            code = f" (HTTP {result.status_code})" if result.status_code else ""
+            QMessageBox.information(self, "Send Test", f"Sink '{cfg.name}' OK{code}.")
+        else:
+            QMessageBox.warning(
+                self, "Send Test", f"Sink '{cfg.name}' failed: {result.error}"
+            )
+
     def _on_theme_changed(self, name: str) -> None:
         """Apply theme immediately for live preview."""
         from PySide6.QtWidgets import QApplication
         app = QApplication.instance()
         if app is not None:
-            app.setStyleSheet(load_theme(name))
+            app.setStyleSheet(resolve_theme(name))
 
     def _save_and_accept(self) -> None:
         """Save settings to config and close."""
@@ -531,6 +716,13 @@ class SettingsDialog(QDialog):
             if item:
                 rule = item.data(Qt.ItemDataRole.UserRole)
                 self.config.rules.append(rule)
+
+        self.config.sinks = []
+        for row in range(self._sinks_table.rowCount()):
+            item = self._sinks_table.item(row, 0)
+            if item:
+                cfg = item.data(Qt.ItemDataRole.UserRole)
+                self.config.sinks.append(cfg)
 
         self.accept()
 
@@ -970,6 +1162,8 @@ class RuleEditDialog(QDialog):
         rule: Rule | None = None,
         feed_urls: list[str] | None = None,
         parent: QDialog | None = None,
+        sink_names: list[str] | None = None,
+        sample_entries: list[FeedEntry] | None = None,
     ) -> None:
         """Initialise the rule editor.
 
@@ -977,12 +1171,16 @@ class RuleEditDialog(QDialog):
             rule: Existing Rule to edit, or ``None`` to create a new one.
             feed_urls: Feed URLs for the feed condition dropdown.
             parent: Optional parent widget.
+            sink_names: Names of configured sinks the rule may target.
+            sample_entries: Current dashboard entries for dry-run preview.
         """
         super().__init__(parent)
         self.setWindowTitle("Edit Rule" if rule else "Add Rule")
         self.setMinimumWidth(480)
         self._rule = rule
         self._feed_urls = feed_urls or []
+        self._sink_names = sink_names or []
+        self._sample_entries = sample_entries or []
         self._highlight_color: str | None = rule.highlight_color if rule else None
         self._setup_ui()
         if rule:
@@ -1055,11 +1253,26 @@ class RuleEditDialog(QDialog):
 
         self._script_edit = QLineEdit()
         self._script_edit.setPlaceholderText('echo "$JINKIES_TITLE"')
-        layout.addRow("Script:", self._script_edit)
+        layout.addRow("Script (legacy):", self._script_edit)
+
+        # Named sinks the rule fires at.
+        self._sinks_list = QListWidget()
+        self._sinks_list.setMaximumHeight(96)
+        for name in self._sink_names:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            self._sinks_list.addItem(item)
+        if self._sink_names:
+            layout.addRow("Sinks:", self._sinks_list)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        self._test_btn = buttons.addButton(
+            "Test…", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        self._test_btn.clicked.connect(self._dry_run)
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -1100,6 +1313,11 @@ class RuleEditDialog(QDialog):
         self._update_color_btn()
         self._webhook_edit.setText(rule.webhook_url or "")
         self._script_edit.setText(rule.script or "")
+        selected = set(rule.sinks)
+        for i in range(self._sinks_list.count()):
+            item = self._sinks_list.item(i)
+            if item.text() in selected:
+                item.setCheckState(Qt.CheckState.Checked)
 
     def _browse_sound(self) -> None:
         """Open a file dialog to pick a WAV file for this rule."""
@@ -1133,6 +1351,38 @@ class RuleEditDialog(QDialog):
             self._color_btn.setText("Choose color…")
             self._color_btn.setStyleSheet("")
 
+    def _checked_sinks(self) -> list[str]:
+        """Return the names of sinks checked in the sinks list."""
+        names: list[str] = []
+        for i in range(self._sinks_list.count()):
+            item = self._sinks_list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                names.append(item.text())
+        return names
+
+    def _dry_run(self) -> None:
+        """Preview which current entries this rule would match."""
+        rule = self.get_rule()
+        if not self._sample_entries:
+            QMessageBox.information(
+                self, "Rule Test", "No entries available to test against."
+            )
+            return
+        matched = [e for e in self._sample_entries if rule.matches(e)]
+        total = len(self._sample_entries)
+        if not matched:
+            QMessageBox.information(
+                self, "Rule Test", f"0 of {total} entries match this rule."
+            )
+            return
+        sample = "\n".join(f"  • {e.title}" for e in matched[:10])
+        more = "" if len(matched) <= 10 else f"\n  …and {len(matched) - 10} more"
+        QMessageBox.information(
+            self,
+            "Rule Test",
+            f"{len(matched)} of {total} entries match this rule:\n\n{sample}{more}",
+        )
+
     def _validate_and_accept(self) -> None:
         """Validate required fields then accept."""
         if not self._name_edit.text().strip():
@@ -1164,4 +1414,196 @@ class RuleEditDialog(QDialog):
             highlight_color=self._highlight_color,
             webhook_url=webhook_url,
             script=script,
+            sinks=self._checked_sinks(),
         )
+
+
+class SinkEditDialog(QDialog):
+    """Dialog for creating or editing a single notification sink.
+
+    Provider presets pre-fill the URL, headers, and body template; the user
+    can override any of them.  Secrets (e.g. Pushover tokens) are written to
+    the OS keyring on accept and never stored in config.
+    """
+
+    def __init__(
+        self,
+        sink: SinkConfig | None = None,
+        existing_names: list[str] | None = None,
+        parent: QDialog | None = None,
+    ) -> None:
+        """Initialise the sink editor.
+
+        Args:
+            sink: Existing :class:`SinkConfig` to edit, or ``None`` for new.
+            existing_names: Names already in use (for uniqueness validation).
+            parent: Optional parent widget.
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Edit Sink" if sink else "Add Sink")
+        self.setMinimumWidth(520)
+        self._sink = sink
+        self._existing_names = set(existing_names or [])
+        self._secret_edits: dict[str, QLineEdit] = {}
+        self._setup_ui()
+        if sink:
+            self._load_sink(sink)
+        else:
+            self._apply_preset(self._provider_combo.currentData())
+
+    def _setup_ui(self) -> None:
+        """Build the sink editor UI."""
+        layout = QFormLayout(self)
+
+        self._name_edit = QLineEdit()
+        self._name_edit.setPlaceholderText("Unique sink name (e.g. team-discord)")
+        layout.addRow("Name:", self._name_edit)
+
+        self._provider_combo = QComboBox()
+        for key, preset in PROVIDER_PRESETS.items():
+            self._provider_combo.addItem(preset.name, key)
+        self._provider_combo.currentIndexChanged.connect(
+            lambda: self._apply_preset(self._provider_combo.currentData())
+        )
+        layout.addRow("Provider:", self._provider_combo)
+
+        self._enabled_check = QCheckBox("Enabled")
+        self._enabled_check.setChecked(True)
+        layout.addRow("", self._enabled_check)
+
+        self._url_edit = QLineEdit()
+        self._url_edit.setPlaceholderText("https://…")
+        layout.addRow("URL:", self._url_edit)
+
+        self._body_edit = QPlainTextEdit()
+        self._body_edit.setPlaceholderText(
+            "Body template — vars: {title} {link} {status} "
+            "{feed_name} {published} {summary}"
+        )
+        self._body_edit.setMaximumHeight(110)
+        self._body_row_label = QLabel("Body template:")
+        layout.addRow(self._body_row_label, self._body_edit)
+
+        self._script_edit = QLineEdit()
+        self._script_edit.setPlaceholderText('echo "$JINKIES_TITLE"')
+        self._script_row_label = QLabel("Script:")
+        layout.addRow(self._script_row_label, self._script_edit)
+
+        # Secret fields container (rebuilt per provider).
+        self._secrets_group = QGroupBox("Secrets (stored in OS keyring)")
+        self._secrets_form = QFormLayout()
+        self._secrets_group.setLayout(self._secrets_form)
+        layout.addRow(self._secrets_group)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        test_btn = buttons.addButton(
+            "Send Test…", QDialogButtonBox.ButtonRole.ActionRole
+        )
+        test_btn.clicked.connect(self._send_test)
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _apply_preset(self, provider_key: str) -> None:
+        """Fill URL/headers/body and secret fields from a provider preset."""
+        preset = PROVIDER_PRESETS.get(provider_key)
+        if preset is None:
+            return
+        is_script = preset.transport == "script"
+        self._url_edit.setVisible(not is_script)
+        self._body_edit.setVisible(not is_script)
+        self._body_row_label.setVisible(not is_script)
+        self._script_edit.setVisible(is_script)
+        self._script_row_label.setVisible(is_script)
+        if not self._url_edit.text().strip():
+            self._url_edit.setText(preset.url_template)
+        if not self._body_edit.toPlainText().strip():
+            self._body_edit.setPlainText(preset.body_template)
+        self._rebuild_secret_fields(preset.secret_fields)
+
+    def _rebuild_secret_fields(self, keys: tuple[str, ...]) -> None:
+        """Rebuild masked secret inputs for the given keys."""
+        while self._secrets_form.rowCount():
+            self._secrets_form.removeRow(0)
+        self._secret_edits = {}
+        for key in keys:
+            edit = QLineEdit()
+            edit.setEchoMode(QLineEdit.EchoMode.Password)
+            edit.setPlaceholderText("Leave blank to keep existing")
+            self._secrets_form.addRow(f"{key}:", edit)
+            self._secret_edits[key] = edit
+        self._secrets_group.setVisible(bool(keys))
+
+    def _load_sink(self, sink: SinkConfig) -> None:
+        """Populate UI fields from an existing sink config."""
+        self._name_edit.setText(sink.name)
+        idx = self._provider_combo.findData(sink.provider)
+        if idx >= 0:
+            self._provider_combo.setCurrentIndex(idx)
+        self._enabled_check.setChecked(sink.enabled)
+        self._url_edit.setText(sink.url)
+        self._body_edit.setPlainText(sink.body_template)
+        self._script_edit.setText(sink.script)
+        self._apply_preset(sink.provider)
+
+    def _build_config(self) -> SinkConfig:
+        """Construct a :class:`SinkConfig` from current fields."""
+        provider = self._provider_combo.currentData()
+        preset = PROVIDER_PRESETS.get(provider)
+        transport = preset.transport if preset else "http"
+        return SinkConfig(
+            name=self._name_edit.text().strip(),
+            provider=provider,
+            transport=transport,
+            url=self._url_edit.text().strip(),
+            headers=dict(preset.headers) if preset else {},
+            body_template=self._body_edit.toPlainText(),
+            script=self._script_edit.text().strip(),
+            enabled=self._enabled_check.isChecked(),
+        )
+
+    def _persist_secrets(self, sink_name: str) -> None:
+        """Write any entered secrets to the keyring for *sink_name*."""
+        for key, edit in self._secret_edits.items():
+            value = edit.text()
+            if value:
+                store_sink_secret(sink_name, key, value)
+
+    def _send_test(self) -> None:
+        """Send a sample payload through the in-progress sink config."""
+        cfg = self._build_config()
+        if not cfg.name:
+            QMessageBox.warning(self, "Send Test", "Give the sink a name first.")
+            return
+        # Persist secrets so {secret:KEY} placeholders resolve during the test.
+        self._persist_secrets(cfg.name)
+        result = build_sink(cfg).test()
+        if result.ok:
+            code = f" (HTTP {result.status_code})" if result.status_code else ""
+            QMessageBox.information(self, "Send Test", f"Success{code}.")
+        else:
+            QMessageBox.warning(self, "Send Test", f"Failed: {result.error}")
+
+    def _validate_and_accept(self) -> None:
+        """Validate name uniqueness then accept, persisting secrets."""
+        name = self._name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Invalid Sink", "Sink name must not be empty.")
+            return
+        if name in self._existing_names:
+            QMessageBox.warning(
+                self, "Invalid Sink", f"A sink named '{name}' already exists."
+            )
+            return
+        self._persist_secrets(name)
+        self.accept()
+
+    def get_sink(self) -> SinkConfig:
+        """Return the configured sink.
+
+        Returns:
+            A :class:`SinkConfig` reflecting the user's input.
+        """
+        return self._build_config()

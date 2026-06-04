@@ -210,6 +210,12 @@ class Rule:
         notification: Whether to send a desktop notification when the rule fires.
         highlight_color: Hex colour string (e.g. ``"#ff8800"``) for row highlight.
             ``None`` means no highlight.
+        webhook_url: Legacy single-webhook action.  Retained for backward
+            compatibility; new configs should reference named sinks instead.
+        script: Legacy inline shell-command action, retained for backward
+            compatibility.
+        sinks: Names of configured sinks (see :class:`~src.notify_sinks.SinkConfig`)
+            to fire when this rule matches.
     """
 
     name: str
@@ -224,6 +230,7 @@ class Rule:
     highlight_color: str | None = None
     webhook_url: str | None = None
     script: str | None = None
+    sinks: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -242,6 +249,7 @@ class Rule:
             "highlight_color": self.highlight_color,
             "webhook_url": self.webhook_url,
             "script": self.script,
+            "sinks": list(self.sinks),
         }
 
     @classmethod
@@ -265,6 +273,7 @@ class Rule:
             highlight_color=data.get("highlight_color"),
             webhook_url=data.get("webhook_url"),
             script=data.get("script"),
+            sinks=list(data.get("sinks", [])),
         )
 
     def matches(self, entry: FeedEntry) -> bool:
@@ -294,6 +303,43 @@ class Rule:
             if kw != self.status.lower():
                 return False
         return True
+
+
+@dataclass
+class SavedFilter:
+    """A named, reusable dashboard filter preset.
+
+    Attributes:
+        name: Display name for the preset.
+        feed_filter: The feed-filter combo selection text (e.g. ``"All Feeds"``,
+            ``"⭐ Starred"``, a group entry, or a feed name).
+        search_text: Search-box text.
+        include_content: Whether the "Include content" search option is on.
+    """
+
+    name: str
+    feed_filter: str = "All Feeds"
+    search_text: str = ""
+    include_content: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dictionary."""
+        return {
+            "name": self.name,
+            "feed_filter": self.feed_filter,
+            "search_text": self.search_text,
+            "include_content": self.include_content,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SavedFilter:
+        """Deserialize from a dictionary."""
+        return cls(
+            name=data.get("name", ""),
+            feed_filter=data.get("feed_filter", "All Feeds"),
+            search_text=data.get("search_text", ""),
+            include_content=bool(data.get("include_content", False)),
+        )
 
 
 @dataclass
@@ -330,6 +376,9 @@ class AppConfig:
     theme: str = "aero"
     show_tray_badge: bool = True
     rules: list[Rule] = field(default_factory=list)
+    sinks: list[Any] = field(default_factory=list)
+    saved_filters: list[SavedFilter] = field(default_factory=list)
+    collapsed_groups: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dictionary.
@@ -348,6 +397,9 @@ class AppConfig:
             "theme": self.theme,
             "show_tray_badge": self.show_tray_badge,
             "rules": [r.to_dict() for r in self.rules],
+            "sinks": [s.to_dict() for s in self.sinks],
+            "saved_filters": [f.to_dict() for f in self.saved_filters],
+            "collapsed_groups": list(self.collapsed_groups),
         }
 
     @classmethod
@@ -373,6 +425,8 @@ class AppConfig:
         Returns:
             An AppConfig instance.
         """
+        from src.notify_sinks import SinkConfig as _SinkConfig  # noqa: PLC0415
+
         raw_interval = data.get("poll_interval_secs", 60)
         if raw_interval < _POLL_INTERVAL_MIN:
             logger.warning(
@@ -441,4 +495,9 @@ class AppConfig:
             theme=data.get("theme", "aero"),
             show_tray_badge=bool(data.get("show_tray_badge", True)),
             rules=[Rule.from_dict(r) for r in data.get("rules", [])],
+            sinks=[_SinkConfig.from_dict(s) for s in data.get("sinks", [])],
+            saved_filters=[
+                SavedFilter.from_dict(f) for f in data.get("saved_filters", [])
+            ],
+            collapsed_groups=list(data.get("collapsed_groups", [])),
         )

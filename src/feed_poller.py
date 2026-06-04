@@ -101,6 +101,9 @@ class FeedPoller(QThread):
     poll_time_updated = Signal(str, str)
     feed_backoff_changed = Signal(str, int)
     rule_triggered = Signal(object, object)
+    #: Emitted with (rule_name, SendResult) after each sink dispatch so the UI
+    #: can surface failures instead of silently swallowing them.
+    sink_dispatch_result = Signal(str, object)
 
     def __init__(
         self,
@@ -135,6 +138,10 @@ class FeedPoller(QThread):
         # User-defined rules for entry matching.
         self._rules_lock = Lock()
         self._rules: list[Rule] = []
+        # Registry of named notification sinks (thread-safe internally).
+        from src.notify_sinks import SinkRegistry  # noqa: PLC0415
+
+        self._sink_registry = SinkRegistry()
 
     def run(self) -> None:
         """Execute the polling loop.
@@ -500,33 +507,98 @@ class FeedPoller(QThread):
         with self._rules_lock:
             self._rules = list(rules)
 
+    def update_sinks(self, sinks: list) -> None:
+        """Replace the set of configured notification sinks.
+
+        Thread-safe; may be called from the main thread while the poller runs.
+
+        Args:
+            sinks: New list of :class:`~src.notify_sinks.SinkConfig` objects.
+        """
+        self._sink_registry.update(sinks)
+
+    def _feed_name_for(self, feed_url: str) -> str:
+        """Return the display name of the feed with *feed_url* (or the URL)."""
+        with self._feeds_lock:
+            for feed in self.feeds:
+                if feed.url == feed_url:
+                    return feed.name
+        return feed_url
+
     def _evaluate_rules(self, entries: list[FeedEntry]) -> None:
         """Check each entry against all enabled rules and emit rule_triggered.
+
+        For each matched rule, every referenced sink is dispatched in its own
+        daemon thread.  Legacy ``webhook_url`` / ``script`` actions are mapped
+        onto anonymous sinks so existing configurations keep working.
 
         Args:
             entries: Newly discovered feed entries to evaluate.
         """
+        from src.notifier import jenkins_status  # noqa: PLC0415
+        from src.notify_sinks import SinkPayload  # noqa: PLC0415
+
         with self._rules_lock:
             rules_snapshot = list(self._rules)
         for entry in entries:
+            status_result = jenkins_status(entry.title)
+            status_kw = status_result[0] if status_result else ""
+            payload = SinkPayload.from_entry(
+                entry, self._feed_name_for(entry.feed_url), status_kw
+            )
             for rule in rules_snapshot:
-                if rule.enabled and rule.matches(entry):
-                    self.rule_triggered.emit(entry, rule)
-                    if rule.webhook_url:
-                        threading.Thread(
-                            target=self._dispatch_webhook,
-                            args=(rule.webhook_url, entry),
-                            daemon=True,
-                        ).start()
-                    if rule.script:
-                        threading.Thread(
-                            target=self._dispatch_script,
-                            args=(rule.script, entry),
-                            daemon=True,
-                        ).start()
+                if not (rule.enabled and rule.matches(entry)):
+                    continue
+                self.rule_triggered.emit(entry, rule)
+                # Legacy single webhook → anonymous WebhookSink with the
+                # historical JSON payload shape (preserved verbatim below).
+                if rule.webhook_url:
+                    threading.Thread(
+                        target=self._dispatch_webhook,
+                        args=(rule.webhook_url, entry),
+                        daemon=True,
+                    ).start()
+                # Legacy inline script → anonymous ScriptSink.
+                if rule.script:
+                    threading.Thread(
+                        target=self._dispatch_script,
+                        args=(rule.script, entry),
+                        daemon=True,
+                    ).start()
+                # Named sinks resolved from the registry.
+                for sink_name in rule.sinks:
+                    sink = self._sink_registry.get(sink_name)
+                    if sink is None:
+                        continue
+                    threading.Thread(
+                        target=self._dispatch_sink,
+                        args=(sink, payload, rule.name),
+                        daemon=True,
+                    ).start()
+
+    def _dispatch_sink(self, sink, payload, rule_name: str) -> None:
+        """Send *payload* through *sink* and emit the result. Daemon thread.
+
+        Args:
+            sink: The :class:`~src.notify_sinks.Sink` to dispatch through.
+            payload: The :class:`~src.notify_sinks.SinkPayload` to send.
+            rule_name: Name of the rule that triggered this dispatch.
+        """
+        result = sink.send(payload)
+        if not result.ok:
+            logger.warning(
+                "Sink %r failed for rule %r: %s",
+                getattr(sink, "name", "?"),
+                rule_name,
+                result.error,
+            )
+        self.sink_dispatch_result.emit(rule_name, result)
 
     def _dispatch_webhook(self, url: str, entry: FeedEntry) -> None:
         """POST entry data as JSON to url. Called in a daemon thread.
+
+        Legacy fire-and-forget webhook dispatch, preserved for backward
+        compatibility with configs that set ``Rule.webhook_url`` directly.
 
         Args:
             url: The webhook URL to POST to.
@@ -553,6 +625,9 @@ class FeedPoller(QThread):
 
     def _dispatch_script(self, script: str, entry: FeedEntry) -> None:
         """Run script as a shell command with entry data as env vars.
+
+        Legacy fire-and-forget script dispatch, preserved for backward
+        compatibility with configs that set ``Rule.script`` directly.
 
         Args:
             script: Shell command string to execute.

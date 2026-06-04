@@ -95,6 +95,12 @@ class Dashboard(QMainWindow):
     unread_count_changed = Signal(int)
     #: Emitted when the user requests the feed health dashboard.
     health_requested = Signal()
+    #: Emitted with the new list of collapsed group names when it changes.
+    collapsed_groups_changed = Signal(list)
+    #: Emitted with a :class:`~src.models.SavedFilter` to persist.
+    save_filter_requested = Signal(object)
+    #: Emitted with the new full list of saved filters when one is deleted.
+    saved_filters_changed = Signal(list)
 
     def __init__(self) -> None:
         """Initialize the dashboard window."""
@@ -128,6 +134,8 @@ class Dashboard(QMainWindow):
         self._feed_errors: dict[str, str] = {}
         self._feed_backoff: dict[str, int] = {}  # url → backoff seconds
         self._feed_groups: dict[str, list[Feed]] = {}
+        self._collapsed_groups: set[str] = set()
+        self._saved_filters: list = []
 
         self._active_table: QTableWidget | None = None
 
@@ -220,6 +228,12 @@ class Dashboard(QMainWindow):
         self._feed_health_action.setShortcut(QKeySequence("Ctrl+Shift+H"))
         self._feed_health_action.setToolTip("Show per-feed health statistics")
         self._feed_health_action.triggered.connect(self.health_requested.emit)
+
+        view_menu.addSeparator()
+        self._shortcuts_action = view_menu.addAction("Keyboard Shortcuts…")
+        self._shortcuts_action.setShortcut(QKeySequence("?"))
+        self._shortcuts_action.setToolTip("Show the keyboard shortcut reference")
+        self._shortcuts_action.triggered.connect(self._show_shortcuts_help)
 
     def _setup_toolbar(self) -> None:
         """Create the main toolbar with action buttons."""
@@ -324,6 +338,24 @@ class Dashboard(QMainWindow):
         filter_layout.addWidget(self._search_content_check)
 
         filter_layout.addStretch()
+
+        # Saved filters: apply a preset, save the current state, or delete one.
+        filter_layout.addWidget(QLabel("Saved:"))
+        self._saved_filter_combo = QComboBox()
+        self._saved_filter_combo.setMinimumWidth(140)
+        self._saved_filter_combo.activated.connect(self._on_saved_filter_selected)
+        filter_layout.addWidget(self._saved_filter_combo)
+
+        self._save_filter_btn = QPushButton("Save…")
+        self._save_filter_btn.setToolTip("Save the current filter and search as a preset")
+        self._save_filter_btn.clicked.connect(self._on_save_filter_clicked)
+        filter_layout.addWidget(self._save_filter_btn)
+
+        self._delete_filter_btn = QPushButton("Delete")
+        self._delete_filter_btn.setToolTip("Delete the selected saved filter")
+        self._delete_filter_btn.clicked.connect(self._on_delete_filter_clicked)
+        filter_layout.addWidget(self._delete_filter_btn)
+
         layout.addLayout(filter_layout)
 
         # Splitter: feed list | right pane
@@ -334,6 +366,7 @@ class Dashboard(QMainWindow):
         self._feed_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self._feed_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._feed_list.model().rowsMoved.connect(self._on_feed_reordered)
+        self._feed_list.itemClicked.connect(self._on_feed_item_clicked)
         self._splitter.addWidget(self._feed_list)
 
         # Right pane: vertical splitter with (top) tables pane and (bottom) preview pane
@@ -548,25 +581,116 @@ class Dashboard(QMainWindow):
 
         # Add group-header items and their feeds to the filter combo.
         for group_name, group_feeds in self._feed_groups.items():
-            # Group header — bold, not selectable
-            header_item = QListWidgetItem(f"  {group_name}")
+            collapsed = group_name in self._collapsed_groups
+            # Group header — bold, clickable to toggle collapse.  Disclosure
+            # triangle reflects collapsed state.
+            arrow = "▶" if collapsed else "▼"  # ▶ / ▼
+            header_item = QListWidgetItem(f"{arrow} {group_name}")
             font = header_item.font()
             font.setBold(True)
             header_item.setFont(font)
+            # Selectable so clicks register, but not draggable.
             header_item.setFlags(
-                header_item.flags()
-                & ~Qt.ItemFlag.ItemIsSelectable
-                & ~Qt.ItemFlag.ItemIsEnabled
+                (header_item.flags() | Qt.ItemFlag.ItemIsSelectable)
+                & ~Qt.ItemFlag.ItemIsDragEnabled
             )
+            # Mark as a group header carrying its group name.
+            header_item.setData(Qt.ItemDataRole.UserRole, None)
+            header_item.setData(Qt.ItemDataRole.UserRole + 2, group_name)
             self._feed_list.addItem(header_item)
             # Group entry in filter combo
             self._filter_combo.addItem(f"\U0001f4c1 {group_name}")
-            for feed in group_feeds:
-                _add_feed_item(feed, indent=True)
+            if not collapsed:
+                for feed in group_feeds:
+                    _add_feed_item(feed, indent=True)
 
         # Ungrouped feeds
         for feed in ungrouped:
             _add_feed_item(feed, indent=not all_ungrouped)
+
+    def set_collapsed_groups(self, groups: list[str]) -> None:
+        """Restore which feed groups are collapsed and re-render the list.
+
+        Args:
+            groups: Names of groups that should appear collapsed.
+        """
+        self._collapsed_groups = set(groups)
+        if self._feeds:
+            self.update_feeds(self._feeds)
+
+    def _on_feed_item_clicked(self, item: QListWidgetItem) -> None:
+        """Toggle group collapse when a group-header row is clicked.
+
+        Args:
+            item: The clicked feed-list item.
+        """
+        group_name = item.data(Qt.ItemDataRole.UserRole + 2)
+        if not group_name:
+            return  # A normal feed row, not a group header.
+        if group_name in self._collapsed_groups:
+            self._collapsed_groups.discard(group_name)
+        else:
+            self._collapsed_groups.add(group_name)
+        self.collapsed_groups_changed.emit(sorted(self._collapsed_groups))
+        self.update_feeds(self._feeds)
+
+    def set_saved_filters(self, filters: list) -> None:
+        """Populate the saved-filter dropdown.
+
+        Args:
+            filters: List of :class:`~src.models.SavedFilter` objects.
+        """
+        self._saved_filters = list(filters)
+        self._saved_filter_combo.blockSignals(True)
+        self._saved_filter_combo.clear()
+        self._saved_filter_combo.addItem("— Saved filters —", None)
+        for f in self._saved_filters:
+            self._saved_filter_combo.addItem(f.name, f)
+        self._saved_filter_combo.setCurrentIndex(0)
+        self._saved_filter_combo.blockSignals(False)
+
+    def _on_saved_filter_selected(self, index: int) -> None:
+        """Apply the saved filter chosen from the dropdown."""
+        preset = self._saved_filter_combo.itemData(index)
+        if preset is None:
+            return
+        combo_idx = self._filter_combo.findText(preset.feed_filter)
+        if combo_idx >= 0:
+            self._filter_combo.setCurrentIndex(combo_idx)
+        self._search_content_check.setChecked(preset.include_content)
+        self._search_input.setText(preset.search_text)
+        self._refresh_table()
+
+    def _on_save_filter_clicked(self) -> None:
+        """Capture the current filter state and request that it be saved."""
+        from PySide6.QtWidgets import QInputDialog
+
+        from src.models import SavedFilter
+
+        name, ok = QInputDialog.getText(self, "Save Filter", "Filter name:")
+        name = name.strip()
+        if not ok or not name:
+            return
+        preset = SavedFilter(
+            name=name,
+            feed_filter=self._filter_combo.currentText(),
+            search_text=self._search_input.text(),
+            include_content=self._search_content_check.isChecked(),
+        )
+        # Replace any existing preset with the same name.
+        self._saved_filters = [f for f in self._saved_filters if f.name != name]
+        self._saved_filters.append(preset)
+        self.set_saved_filters(self._saved_filters)
+        self.save_filter_requested.emit(preset)
+
+    def _on_delete_filter_clicked(self) -> None:
+        """Delete the currently selected saved filter."""
+        preset = self._saved_filter_combo.currentData()
+        if preset is None:
+            return
+        self._saved_filters = [f for f in self._saved_filters if f.name != preset.name]
+        self.set_saved_filters(self._saved_filters)
+        self.saved_filters_changed.emit(list(self._saved_filters))
 
     def add_entries(self, new_entries: list[FeedEntry]) -> None:
         """Add new entries to the table and update stats.
@@ -1072,6 +1196,7 @@ class Dashboard(QMainWindow):
         """
         url_to_feed = {f.url: f for f in self._feeds}
         ordered: list[Feed] = []
+        seen_urls: set[str] = set()
         for i in range(self._feed_list.count()):
             item = self._feed_list.item(i)
             if item:
@@ -1079,6 +1204,12 @@ class Dashboard(QMainWindow):
                 feed = url_to_feed.get(url)
                 if feed is not None:
                     ordered.append(feed)
+                    seen_urls.add(url)
+        # Feeds inside collapsed groups are not rendered; preserve them by
+        # appending in their original order so a reorder never drops feeds.
+        for feed in self._feeds:
+            if feed.url not in seen_urls:
+                ordered.append(feed)
         self.reorder_feeds_requested.emit(ordered)
 
     def _on_pause_clicked(self) -> None:
@@ -1255,5 +1386,37 @@ class Dashboard(QMainWindow):
             self._search_input.setFocus()
             self._search_input.selectAll()
             return
+        if key == Qt.Key.Key_Question and not search_has_focus:
+            self._show_shortcuts_help()
+            return
 
         super().keyPressEvent(event)
+
+    def _show_shortcuts_help(self) -> None:
+        """Show a dialog listing the keyboard shortcuts."""
+        from PySide6.QtWidgets import QMessageBox
+
+        QMessageBox.information(
+            self,
+            "Keyboard Shortcuts",
+            "<b>Entry navigation</b> (when the search bar is not focused)<br>"
+            "<table cellpadding=3>"
+            "<tr><td><b>J</b> / ↓</td><td>Move selection down</td></tr>"
+            "<tr><td><b>K</b> / ↑</td><td>Move selection up</td></tr>"
+            "<tr><td><b>Enter</b></td><td>Open entry in browser, mark seen</td></tr>"
+            "<tr><td><b>Space</b></td><td>Mark seen, advance to next</td></tr>"
+            "<tr><td><b>U</b></td><td>Mark entry unseen</td></tr>"
+            "<tr><td><b>S</b></td><td>Toggle star / bookmark</td></tr>"
+            "<tr><td><b>/</b></td><td>Focus the search bar</td></tr>"
+            "<tr><td><b>?</b></td><td>Show this help</td></tr>"
+            "</table><br>"
+            "<b>Global</b><br>"
+            "<table cellpadding=3>"
+            "<tr><td><b>Ctrl+I</b></td><td>Import feeds</td></tr>"
+            "<tr><td><b>Ctrl+E</b></td><td>Export feeds</td></tr>"
+            "<tr><td><b>Ctrl+,</b></td><td>Settings</td></tr>"
+            "<tr><td><b>Ctrl+P</b></td><td>Pause / resume polling</td></tr>"
+            "<tr><td><b>Ctrl+Shift+P</b></td><td>Toggle preview pane</td></tr>"
+            "<tr><td><b>Ctrl+Shift+H</b></td><td>Feed health</td></tr>"
+            "</table>",
+        )

@@ -36,7 +36,7 @@ from src.models import Feed, FeedEntry
 from src.notifier import Notifier
 from src.settings_dialog import FeedEditDialog, ImportPreviewDialog, SettingsDialog
 from src.platform_effects import apply_window_effects
-from src.theme import load_theme
+from src.theme import resolve_theme
 
 
 def _get_icon_path() -> str:
@@ -164,7 +164,12 @@ class JinkiesApp:
 
         # Load config and state
         self.config = load_config()
-        self.app.setStyleSheet(load_theme(self.config.theme))
+        self.app.setStyleSheet(resolve_theme(self.config.theme))
+        # Live-reapply the theme when the OS colour scheme changes (only has a
+        # visible effect when the user selected the "system" theme).
+        self.app.styleHints().colorSchemeChanged.connect(
+            self._on_color_scheme_changed
+        )
         self._state = load_state(max_age_days=self.config.seen_ids_max_age_days)
         # seen_ids in state is now a dict {entry_id: iso_timestamp}
         seen_ids_dict: dict[str, str] = self._state.get("seen_ids", {})
@@ -217,8 +222,10 @@ class JinkiesApp:
         self.dashboard = Dashboard()
         self.dashboard.max_entries = self.config.max_entries
         self.dashboard.page_size = self.config.page_size
+        self.dashboard.set_collapsed_groups(self.config.collapsed_groups)
         self.dashboard.update_feeds(self.config.feeds)
         self.dashboard.update_feed_names_mapping(self.config.feeds)
+        self.dashboard.set_saved_filters(self.config.saved_filters)
         if "layout" in self._state:
             self.dashboard.restore_layout_state(self._state["layout"])
 
@@ -231,6 +238,9 @@ class JinkiesApp:
         self.dashboard.reorder_feeds_requested.connect(self._on_reorder_feeds)
         self.dashboard.unread_count_changed.connect(self._update_tray_icon)
         self.dashboard.health_requested.connect(self._on_health_requested)
+        self.dashboard.collapsed_groups_changed.connect(self._on_collapsed_groups_changed)
+        self.dashboard.save_filter_requested.connect(self._on_save_filter)
+        self.dashboard.saved_filters_changed.connect(self._on_saved_filters_changed)
 
         # Track which feeds have already produced an error notification so that
         # repeated errors for the same broken feed are silenced after the first.
@@ -250,7 +260,11 @@ class JinkiesApp:
         self.poller.poll_time_updated.connect(self._on_poll_time_updated)
         self.poller.feed_backoff_changed.connect(self._on_feed_backoff_changed)
         self.poller.rule_triggered.connect(self._on_rule_triggered)
+        self.poller.sink_dispatch_result.connect(self._on_sink_dispatch_result)
         self.poller.update_rules(self.config.rules)
+        self.poller.update_sinks(self.config.sinks)
+        # Bounded log of recent sink dispatch failures, for diagnostics.
+        self._sink_failure_log: list[str] = []
         self.poller.start()
 
     def _setup_tray_menu(self) -> None:
@@ -599,22 +613,75 @@ class JinkiesApp:
 
     def _on_settings(self) -> None:
         """Show the settings dialog."""
-        dialog = SettingsDialog(self.config, parent=self.dashboard)
+        dialog = SettingsDialog(
+            self.config,
+            parent=self.dashboard,
+            audio=self.audio,
+            sample_entries=self.dashboard.entries,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.config = dialog.get_config()
             self._apply_config_changes()
 
+    def _on_color_scheme_changed(self, _scheme: object) -> None:
+        """Re-apply the theme when the OS colour scheme changes."""
+        self.app.setStyleSheet(resolve_theme(self.config.theme))
+
+    def _on_collapsed_groups_changed(self, groups: list) -> None:
+        """Persist the set of collapsed feed groups."""
+        self.config.collapsed_groups = list(groups)
+        save_config(self.config)
+
+    def _on_save_filter(self, preset: object) -> None:
+        """Persist a newly saved filter preset."""
+        # Replace any existing preset with the same name, then append.
+        name = getattr(preset, "name", None)
+        self.config.saved_filters = [
+            f for f in self.config.saved_filters if f.name != name
+        ]
+        self.config.saved_filters.append(preset)
+        save_config(self.config)
+
+    def _on_saved_filters_changed(self, filters: list) -> None:
+        """Persist the full saved-filter list (e.g. after a deletion)."""
+        self.config.saved_filters = list(filters)
+        save_config(self.config)
+
+    def _on_sink_dispatch_result(self, rule_name: str, result: object) -> None:
+        """Surface sink dispatch failures via tray notification and a log.
+
+        Args:
+            rule_name: Name of the rule whose sink was dispatched.
+            result: A :class:`~src.notify_sinks.SendResult`.
+        """
+        if getattr(result, "ok", True):
+            return
+        msg = f"Rule '{rule_name}': {getattr(result, 'error', 'unknown error')}"
+        self._sink_failure_log.append(msg)
+        # Keep only the most recent failures.
+        self._sink_failure_log = self._sink_failure_log[-100:]
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray.showMessage(
+                "Jinkies — notification failed",
+                msg,
+                QSystemTrayIcon.MessageIcon.Warning,
+                4000,
+            )
+
     def _apply_config_changes(self) -> None:
         """Apply config changes to all components and save."""
         save_config(self.config)
-        self.app.setStyleSheet(load_theme(self.config.theme))
+        self.app.setStyleSheet(resolve_theme(self.config.theme))
         self.dashboard.max_entries = self.config.max_entries
         self.dashboard.page_size = self.config.page_size
+        self.dashboard.set_collapsed_groups(self.config.collapsed_groups)
         self.dashboard.update_feeds(self.config.feeds)
         self.dashboard.update_feed_names_mapping(self.config.feeds)
+        self.dashboard.set_saved_filters(self.config.saved_filters)
         self.poller.update_feeds(self.config.feeds)
         self.poller.update_interval(self.config.poll_interval_secs)
         self.poller.update_rules(self.config.rules)
+        self.poller.update_sinks(self.config.sinks)
         self.audio.sound_map = self.config.sound_map
         self.notifier = Notifier(
             tray_icon=self._tray,
