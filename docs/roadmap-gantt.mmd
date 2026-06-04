@@ -1,0 +1,47 @@
+gantt
+    title Jinkies Roadmap v2 — 6 Epics
+    dateFormat YYYY-MM-DD
+    axisFormat %b %d
+    excludes weekends
+
+    section E3 UX Polish
+    Collapsible feed groups in sidebar   :e3a, 2026-06-08, 4d
+    Starred-only view + saved filters    :e3b, after e3a, 3d
+    Rule test/dry-run preview            :e3c, after e3b, 3d
+    Sound preview + shortcut overlay     :e3d, after e3c, 2d
+    OS dark-mode auto-detect             :e3e, after e3d, 2d
+
+    section E6 Webhook Sink
+    Sink registry + abstraction          :e6a, 2026-06-08, 4d
+    Refactor rule webhook through sink   :e6b, after e6a, 3d
+    Template engine (safe str.format)    :e6c, after e6b, 3d
+    Provider presets (Discord/Slack/ntfy):e6d, after e6c, 3d
+    Send-test + async result capture     :e6e, after e6d, 3d
+    Keyring secrets for sinks            :e6f, after e6e, 2d
+
+    section E2 Notif Control
+    Model fields (mute/DND/digest)       :e2a, after e6b, 3d
+    Quiet hours / DND scheduler          :e2b, after e2a, 4d
+    Snooze + per-feed mute               :e2c, after e2b, 3d
+    Failure-only mode                    :e2d, after e2c, 2d
+    Digest batching                      :e2e, after e2d, 3d
+
+    section E5 Mobile Push
+    ntfy subscribe-flow helper UI        :e5a, after e6e, 3d
+    Mobile-only routing + priority       :e5b, after e5a, 3d
+    Honor DND quiet hours on push        :e5c, after e2b, 2d
+
+    section E1 Jenkins-native
+    Jenkins JSON API client              :e1a, 2026-06-22, 5d
+    API-token auth + CSRF crumb          :e1b, after e1a, 3d
+    Auto-detect Jenkins from base URL    :e1c, after e1b, 2d
+    Build status summary bar             :e1d, after e1c, 3d
+    Rich build payload in model          :e1e, after e1d, 3d
+    Actions (console/retrigger/open)     :e1f, after e1e, 4d
+    Enrich notif + webhook payloads      :e1g, after e1f, 3d
+
+    section E4 DX / Power-user
+    Parallel polling (thread pool)       :e4a, 2026-07-06, 4d
+    Per-feed error history / log view    :e4b, after e4a, 3d
+    CLI / headless mode                  :e4c, after e4b, 4d
+    Webhook result visibility + retry    :e4d, after e6e, 3d
